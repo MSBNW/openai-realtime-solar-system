@@ -10,7 +10,19 @@ export const MCP_SERVER_CATALOG = {
     id: 'tavily',
     name: 'Tavily Search',
     category: 'research',
-    description: 'Web search and research capabilities',
+    description: 'Web search and research capabilities (Remote)',
+    transport: 'http',
+    baseUrl: 'https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}',
+    envVars: ['TAVILY_API_KEY'],
+    capabilities: ['web_search', 'news_search', 'research'],
+    setupUrl: 'https://tavily.com/'
+  },
+  tavily_local: {
+    id: 'tavily_local',
+    name: 'Tavily Search (Local)',
+    category: 'research',
+    description: 'Web search and research capabilities (Local NPX)',
+    transport: 'stdio',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-tavily'],
     envVars: ['TAVILY_API_KEY'],
@@ -22,6 +34,7 @@ export const MCP_SERVER_CATALOG = {
     name: 'GitHub',
     category: 'development',
     description: 'Access repositories, issues, and pull requests',
+    transport: 'stdio',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-github'],
     envVars: ['GITHUB_TOKEN'],
@@ -33,6 +46,7 @@ export const MCP_SERVER_CATALOG = {
     name: 'Google Drive',
     category: 'productivity',
     description: 'Access and manage Google Drive files',
+    transport: 'stdio',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-gdrive'],
     envVars: ['GDRIVE_CLIENT_ID', 'GDRIVE_CLIENT_SECRET'],
@@ -44,6 +58,7 @@ export const MCP_SERVER_CATALOG = {
     name: 'Slack',
     category: 'communication',
     description: 'Send messages and manage channels',
+    transport: 'stdio',
     command: 'npx',
     args: ['-y', 'mcp-server-slack'],
     envVars: ['SLACK_BOT_TOKEN'],
@@ -55,6 +70,7 @@ export const MCP_SERVER_CATALOG = {
     name: 'PostgreSQL',
     category: 'database',
     description: 'Query and manage PostgreSQL databases',
+    transport: 'stdio',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-postgres'],
     envVars: ['POSTGRES_CONNECTION_STRING'],
@@ -76,7 +92,8 @@ export async function GET(request: NextRequest) {
         description: s.description,
         capabilities: s.capabilities,
         envVars: s.envVars,
-        setupUrl: s.setupUrl
+        setupUrl: s.setupUrl,
+        transport: s.transport
       }))
     });
   } catch (error: any) {

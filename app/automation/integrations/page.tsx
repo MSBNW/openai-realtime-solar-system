@@ -11,6 +11,7 @@ interface MCPServer {
   capabilities: string[];
   envVars: string[];
   setupUrl: string | null;
+  transport: 'stdio' | 'http';
 }
 
 interface ServerWithStatus extends MCPServer {
@@ -207,9 +208,16 @@ export default function IntegrationsPage() {
                   <div className="flex-1 space-y-2">
                     <div className="flex items-center justify-between">
                       <h3 className="text-xl font-bold text-white">{server.name}</h3>
-                      <span className="px-3 py-1 rounded-full text-xs bg-black/30 text-purple-200 capitalize">
-                        {server.category}
-                      </span>
+                      <div className="flex gap-2">
+                        {server.transport === 'http' && (
+                          <span className="px-3 py-1 rounded-full text-xs bg-blue-500/30 text-blue-200 border border-blue-400/40">
+                            🌐 Remote
+                          </span>
+                        )}
+                        <span className="px-3 py-1 rounded-full text-xs bg-black/30 text-purple-200 capitalize">
+                          {server.category}
+                        </span>
+                      </div>
                     </div>
 
                     <p className="text-purple-200 text-sm">{server.description}</p>
