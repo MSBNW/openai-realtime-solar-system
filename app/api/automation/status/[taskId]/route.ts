@@ -8,10 +8,10 @@ import { getOrchestrator } from '@/lib/automation/agent-orchestrator';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { taskId: string } }
+  { params }: { params: Promise<{ taskId: string }> }
 ) {
   try {
-    const { taskId } = params;
+    const { taskId } = await params;
 
     const orchestrator = getOrchestrator();
     const execution = orchestrator.getExecution(taskId);
