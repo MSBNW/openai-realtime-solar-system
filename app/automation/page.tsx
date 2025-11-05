@@ -275,6 +275,79 @@ export default function AutomationPage() {
                     )}
                   </div>
 
+                  {/* Agent Coordination Section */}
+                  {execution.result.toolCalls && execution.result.toolCalls.some((call: any) =>
+                    ['swarm_init', 'agent_spawn', 'task_orchestrate', 'agent_status'].includes(call.tool)
+                  ) && (
+                    <div className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-lg p-4 border border-purple-400/30">
+                      <h4 className="text-purple-200 font-semibold mb-3">🤖 Multi-Agent Coordination (Real-Time)</h4>
+                      <div className="space-y-3">
+                        {execution.result.toolCalls
+                          .filter((call: any) => ['swarm_init', 'agent_spawn', 'task_orchestrate'].includes(call.tool))
+                          .map((call: any, idx: number) => {
+                            const output = call.success ? call.output : null;
+
+                            if (call.tool === 'swarm_init' && output) {
+                              return (
+                                <div key={idx} className="bg-purple-900/30 rounded p-3 border border-purple-400/30">
+                                  <div className="text-purple-100 font-semibold mb-2">
+                                    🌐 Swarm Initialized: {output.swarmId}
+                                  </div>
+                                  <div className="text-sm text-purple-200">
+                                    <div>Topology: <span className="text-purple-100 font-medium">{output.topology}</span></div>
+                                    <div>Max Agents: <span className="text-purple-100 font-medium">{output.maxAgents}</span></div>
+                                    <div className="mt-1 text-purple-300">{output.message}</div>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (call.tool === 'agent_spawn' && output) {
+                              return (
+                                <div key={idx} className="bg-green-900/30 rounded p-3 border border-green-400/30">
+                                  <div className="text-green-100 font-semibold mb-2">
+                                    🤖 Agent Spawned: {output.agentId}
+                                  </div>
+                                  <div className="text-sm text-green-200">
+                                    <div>Type: <span className="text-green-100 font-medium">{output.typeName || output.type}</span></div>
+                                    <div>Task: <span className="text-green-100">{output.task}</span></div>
+                                    {output.swarmId && <div className="text-green-300 text-xs mt-1">Joined: {output.swarmId}</div>}
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (call.tool === 'task_orchestrate' && output) {
+                              return (
+                                <div key={idx} className="bg-pink-900/30 rounded p-3 border border-pink-400/30">
+                                  <div className="text-pink-100 font-semibold mb-2">
+                                    🎯 Task Orchestrated: {output.swarmId}
+                                  </div>
+                                  <div className="text-sm text-pink-200">
+                                    <div>Mode: <span className="text-pink-100 font-medium capitalize">{output.mode}</span></div>
+                                    <div className="mt-2 text-pink-300">{output.message}</div>
+                                    {output.agents && output.agents.length > 0 && (
+                                      <div className="mt-2 space-y-1">
+                                        <div className="text-xs text-pink-300 font-semibold">Agents Working:</div>
+                                        {output.agents.map((agent: any, i: number) => (
+                                          <div key={i} className="text-xs bg-pink-950/40 rounded px-2 py-1">
+                                            <span className="text-pink-200 font-medium">{agent.typeName}</span>
+                                            <span className="text-pink-300"> • {agent.task}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            return null;
+                          })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* MCP Tool Calls Section */}
                   {execution.result.toolCalls && execution.result.toolCalls.length > 0 && (
                     <div className="bg-blue-500/20 rounded-lg p-4 border border-blue-400/30">

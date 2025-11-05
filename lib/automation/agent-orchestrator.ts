@@ -562,6 +562,10 @@ Task has been completed successfully with all requirements addressed.
       .map(a => `- ${a.role}: ${a.responsibility}`)
       .join('\n');
 
+    const hasOrchestrationTools = mcpTools.some(t =>
+      ['task_orchestrate', 'agent_spawn', 'swarm_init'].includes(t.name)
+    );
+
     let toolsSection = '';
     if (mcpTools.length > 0) {
       toolsSection = `
@@ -571,6 +575,25 @@ You have access to the following MCP tools that can help complete this task:
 ${mcpTools.map(t => `- **${t.name}**: ${t.description}`).join('\n')}
 
 **IMPORTANT**: If the task requires current information, web searches, or data that you don't have, you MUST use the appropriate tools. Don't make up information or provide generic answers when tools are available.`;
+
+      if (hasOrchestrationTools) {
+        toolsSection += `
+
+## Multi-Agent Orchestration Available
+You have access to multi-agent orchestration tools! For complex tasks:
+
+1. **USE task_orchestrate FIRST** to automatically spawn specialized agents that will work on different aspects of the task in parallel
+2. The orchestration system will intelligently select and spawn the right agent types (researcher, analyzer, coder, planner, writer, coordinator)
+3. Each agent will work on their specialized subtask simultaneously
+4. This provides better results through parallelization and specialization
+
+**When to use orchestration:**
+- Tasks that can benefit from multiple perspectives (research + analysis)
+- Complex tasks requiring different skill sets (research + coding + documentation)
+- Tasks that can be parallelized for efficiency
+
+After orchestrating, continue with the actual work using other available tools as needed.`;
+      }
     }
 
     return `# Task Execution Brief
