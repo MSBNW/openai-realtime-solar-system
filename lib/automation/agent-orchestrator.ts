@@ -271,7 +271,8 @@ export class AgentOrchestrator {
       execution.logs.push('🔄 Sending request to Claude API...');
 
       // Build messages from conversation history + new prompt
-      const conversationHistory = conversationManager.getClaudeMessages(conversation.id, 10); // Last 10 messages
+      // Limit to last 3 messages to prevent context overflow with large tool results
+      const conversationHistory = conversationManager.getClaudeMessages(conversation.id, 3);
       const messages: any[] = conversationHistory.length > 0
         ? conversationHistory
         : [{
@@ -282,6 +283,12 @@ export class AgentOrchestrator {
       let totalTokens = 0;
       let conversationTurns = 0;
       const maxTurns = 10; // Prevent infinite loops
+
+      // Helper function to truncate large tool results
+      const truncateToolResult = (result: string, maxLength: number = 10000): string => {
+        if (result.length <= maxLength) return result;
+        return result.substring(0, maxLength) + `\n\n[... truncated ${result.length - maxLength} characters to prevent context overflow]`;
+      };
 
       // Agentic loop: keep going until Claude returns a final answer (no more tool uses)
       while (conversationTurns < maxTurns) {
@@ -375,14 +382,21 @@ export class AgentOrchestrator {
             const result = await connectionManager.callTool(toolUse.name, toolUse.input);
             const resultStr = JSON.stringify(result);
 
+            // Truncate large tool results to prevent context overflow
+            const truncatedResult = truncateToolResult(resultStr, 10000);
+
             toolResults.push({
               type: 'tool_result',
               tool_use_id: toolUse.id,
-              content: resultStr
+              content: truncatedResult
             });
 
             execution.logs.push(`  ✓ ${toolUse.name} succeeded`);
-            execution.logs.push(`     Output preview: ${resultStr.substring(0, 300)}${resultStr.length > 300 ? '...' : ''}`);
+            if (resultStr.length > 10000) {
+              execution.logs.push(`     Output: ${resultStr.length} chars (truncated to 10k for context)`);
+            } else {
+              execution.logs.push(`     Output preview: ${resultStr.substring(0, 300)}${resultStr.length > 300 ? '...' : ''}`);
+            }
 
             // Store detailed tool call info for results display
             if (!execution.result) {
