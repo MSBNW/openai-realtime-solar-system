@@ -579,20 +579,32 @@ ${mcpTools.map(t => `- **${t.name}**: ${t.description}`).join('\n')}
       if (hasOrchestrationTools) {
         toolsSection += `
 
-## Multi-Agent Orchestration Available
-You have access to multi-agent orchestration tools! For complex tasks:
+## 🤖 Multi-Agent Orchestration - USE THIS!
+You have multi-agent orchestration capabilities! **START by using task_orchestrate** to demonstrate the system's capabilities:
 
-1. **USE task_orchestrate FIRST** to automatically spawn specialized agents that will work on different aspects of the task in parallel
-2. The orchestration system will intelligently select and spawn the right agent types (researcher, analyzer, coder, planner, writer, coordinator)
-3. Each agent will work on their specialized subtask simultaneously
-4. This provides better results through parallelization and specialization
+**REQUIRED FIRST STEP:**
+1. **Call task_orchestrate FIRST** with the full task description
+   - This will spawn specialized agents (researcher, analyzer, coder, planner, writer, coordinator)
+   - Agents work in parallel for better results
+   - Shows real multi-agent coordination in action
 
-**When to use orchestration:**
-- Tasks that can benefit from multiple perspectives (research + analysis)
-- Complex tasks requiring different skill sets (research + coding + documentation)
-- Tasks that can be parallelized for efficiency
+2. Then proceed with the actual work using other tools (Tavily, etc.)
 
-After orchestrating, continue with the actual work using other available tools as needed.`;
+**Why orchestrate:**
+- Demonstrates parallel agent execution
+- Shows specialized agent roles working together
+- Provides better results through coordination
+- User can see real-time agent activity
+
+**Example:**
+\`\`\`
+task_orchestrate({
+  task: "create content strategy for gmax.co.il",
+  parallel: true
+})
+\`\`\`
+
+After orchestrating, continue with research and execution using available tools.`;
       }
     }
 
