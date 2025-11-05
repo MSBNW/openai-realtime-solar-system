@@ -217,6 +217,37 @@ export class AgentOrchestrator {
   }
 
   /**
+   * Helper to limit object depth for summaries
+   */
+  private limitObjectDepth(obj: any, maxDepth: number, currentDepth: number = 0): any {
+    if (currentDepth >= maxDepth) {
+      return typeof obj === 'object' ? '[Object]' : obj;
+    }
+
+    if (Array.isArray(obj)) {
+      return obj.slice(0, 3).map(item =>
+        this.limitObjectDepth(item, maxDepth, currentDepth + 1)
+      );
+    }
+
+    if (typeof obj === 'object' && obj !== null) {
+      const limited: any = {};
+      let count = 0;
+      for (const [key, value] of Object.entries(obj)) {
+        if (count++ < 10) { // Limit to 10 keys per level
+          limited[key] = this.limitObjectDepth(value, maxDepth, currentDepth + 1);
+        }
+      }
+      if (Object.keys(obj).length > 10) {
+        limited._more = `${Object.keys(obj).length - 10} more keys`;
+      }
+      return limited;
+    }
+
+    return obj;
+  }
+
+  /**
    * Execute task using Anthropic API with MCP tool support
    */
   private async executeWithAnthropic(
@@ -284,10 +315,84 @@ export class AgentOrchestrator {
       let conversationTurns = 0;
       const maxTurns = 10; // Prevent infinite loops
 
-      // Helper function to truncate large tool results
-      const truncateToolResult = (result: string, maxLength: number = 10000): string => {
-        if (result.length <= maxLength) return result;
-        return result.substring(0, maxLength) + `\n\n[... truncated ${result.length - maxLength} characters to prevent context overflow]`;
+      // Helper function to intelligently summarize large tool results
+      const summarizeToolResult = (result: any, toolName: string): string => {
+        const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+
+        // If result is small enough, return as-is
+        if (resultStr.length <= 8000) return resultStr;
+
+        try {
+          // Parse if it's a JSON string
+          const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+
+          // Handle MCP response format
+          let data = parsed;
+          if (parsed.content && Array.isArray(parsed.content) && parsed.content[0]?.type === 'text') {
+            try {
+              data = JSON.parse(parsed.content[0].text);
+            } catch {
+              data = parsed.content[0].text;
+            }
+          }
+
+          // Build intelligent summary
+          const summary: any = {
+            _meta: {
+              tool: toolName,
+              summarized: true,
+              originalSize: resultStr.length
+            }
+          };
+
+          // Extract key information based on data structure
+          if (typeof data === 'object' && data !== null) {
+            for (const [key, value] of Object.entries(data)) {
+              if (Array.isArray(value)) {
+                // For arrays, keep first 3 items + count
+                summary[key] = {
+                  _type: 'array',
+                  totalCount: value.length,
+                  sample: value.slice(0, 3),
+                  ...(value.length > 3 && { _note: `Showing 3 of ${value.length} items` })
+                };
+              } else if (typeof value === 'object' && value !== null) {
+                // For nested objects, include but limit depth
+                summary[key] = this.limitObjectDepth(value, 2);
+              } else {
+                // Include primitives directly
+                summary[key] = value;
+              }
+            }
+          } else {
+            // Not an object, use smart truncation
+            return resultStr.substring(0, 8000) +
+              `\n\n[... truncated ${resultStr.length - 8000} characters. Original size: ${resultStr.length} chars]`;
+          }
+
+          const summaryStr = JSON.stringify(summary, null, 2);
+
+          // If summary is still too large, truncate it
+          if (summaryStr.length > 10000) {
+            return summaryStr.substring(0, 10000) +
+              `\n\n[... summary truncated. Original data: ${resultStr.length} chars]`;
+          }
+
+          return summaryStr;
+
+        } catch (error) {
+          // Parsing failed, use smart truncation with context preservation
+          // Keep beginning and end, indicate middle was removed
+          const keepSize = 4000;
+          if (resultStr.length > keepSize * 2) {
+            return resultStr.substring(0, keepSize) +
+              `\n\n[... ${resultStr.length - (keepSize * 2)} characters omitted ...]\n\n` +
+              resultStr.substring(resultStr.length - keepSize) +
+              `\n\n[Total size: ${resultStr.length} chars. Showing first and last ${keepSize} chars to preserve context.]`;
+          }
+          return resultStr.substring(0, 10000) +
+            `\n\n[... truncated ${resultStr.length - 10000} characters]`;
+        }
       };
 
       // Agentic loop: keep going until Claude returns a final answer (no more tool uses)
@@ -382,20 +487,20 @@ export class AgentOrchestrator {
             const result = await connectionManager.callTool(toolUse.name, toolUse.input);
             const resultStr = JSON.stringify(result);
 
-            // Truncate large tool results to prevent context overflow
-            const truncatedResult = truncateToolResult(resultStr, 10000);
+            // Intelligently summarize large tool results to preserve context while preventing overflow
+            const processedResult = summarizeToolResult(result, toolUse.name);
 
             toolResults.push({
               type: 'tool_result',
               tool_use_id: toolUse.id,
-              content: truncatedResult
+              content: processedResult
             });
 
             execution.logs.push(`  ✓ ${toolUse.name} succeeded`);
-            if (resultStr.length > 10000) {
-              execution.logs.push(`     Output: ${resultStr.length} chars (truncated to 10k for context)`);
+            if (resultStr.length > 8000) {
+              execution.logs.push(`     Output: ${resultStr.length} chars (summarized for context preservation)`);
             } else {
-              execution.logs.push(`     Output preview: ${resultStr.substring(0, 300)}${resultStr.length > 300 ? '...' : ''}`);
+              execution.logs.push(`     Output: ${resultStr.length} chars`);
             }
 
             // Store detailed tool call info for results display
@@ -454,6 +559,25 @@ export class AgentOrchestrator {
           role: 'user',
           content: toolResults
         });
+
+        // Store full tool results in conversation for reference (not sent to Claude)
+        if (conversation && execution.result?.toolCalls && execution.result.toolCalls.length > 0) {
+          const toolOutputAttachments = execution.result.toolCalls.map((tc: any) => ({
+            type: 'tool_output' as const,
+            name: tc.tool,
+            content: tc.output || tc.rawOutput
+          }));
+
+          await conversationManager.addMessage(
+            conversation.id,
+            'assistant',
+            `[Used ${execution.result.toolCalls.length} tool(s): ${execution.result.toolCalls.map((tc: any) => tc.tool).join(', ')}]`,
+            {
+              taskId: execution.taskId,
+              attachments: toolOutputAttachments
+            }
+          );
+        }
 
         execution.logs.push('🔄 Continuing conversation with tool results...');
       }
