@@ -39,12 +39,21 @@ class MCPConnectionManager {
   private connectionConfigs: Map<string, { config: MCPServerConfig; envVars: Record<string, string> }> = new Map();
   private messageId = 0;
   private configFile = path.join(process.cwd(), '.mcp-connections.json');
+  private loadingPromise: Promise<void> | null = null;
 
   constructor() {
     // Load stored configs on startup
-    this.loadConfigs().catch(err => {
-      console.error('Failed to load MCP configs:', err.message);
-    });
+    this.loadingPromise = this.loadConfigs();
+  }
+
+  /**
+   * Ensure configs are loaded before proceeding
+   */
+  private async ensureLoaded(): Promise<void> {
+    if (this.loadingPromise) {
+      await this.loadingPromise;
+      this.loadingPromise = null;
+    }
   }
 
   /**
@@ -108,7 +117,8 @@ class MCPConnectionManager {
   /**
    * Get stored connection configs (for persistence)
    */
-  getStoredConfigs(): Array<{ serverId: string; config: MCPServerConfig; hasApiKey: boolean }> {
+  async getStoredConfigs(): Promise<Array<{ serverId: string; config: MCPServerConfig; hasApiKey: boolean }>> {
+    await this.ensureLoaded();
     return Array.from(this.connectionConfigs.entries()).map(([serverId, { config, envVars }]) => ({
       serverId,
       config,
@@ -248,21 +258,24 @@ class MCPConnectionManager {
   /**
    * Get all active connections
    */
-  getConnections(): MCPConnection[] {
+  async getConnections(): Promise<MCPConnection[]> {
+    await this.ensureLoaded();
     return Array.from(this.connections.values());
   }
 
   /**
    * Get a specific connection
    */
-  getConnection(serverId: string): MCPConnection | undefined {
+  async getConnection(serverId: string): Promise<MCPConnection | undefined> {
+    await this.ensureLoaded();
     return this.connections.get(serverId);
   }
 
   /**
    * Get all available tools from all connected servers
    */
-  getAllTools(): MCPTool[] {
+  async getAllTools(): Promise<MCPTool[]> {
+    await this.ensureLoaded();
     const tools: MCPTool[] = [];
     for (const connection of this.connections.values()) {
       if (connection.connected) {
@@ -515,11 +528,17 @@ class MCPConnectionManager {
       for (const { id, config, envVars } of configs) {
         this.connectionConfigs.set(id, { config, envVars });
 
-        // Try to reconnect (don't await, do it in background)
-        this.reconnect(id).catch(err => {
-          console.error(`Failed to auto-reconnect to ${id}:`, err.message);
-        });
+        // Try to reconnect and wait for it
+        try {
+          console.log(`Auto-reconnecting to ${id}...`);
+          await this.reconnect(id);
+          console.log(`✓ Successfully reconnected to ${id}`);
+        } catch (err: any) {
+          console.error(`✗ Failed to auto-reconnect to ${id}:`, err.message);
+        }
       }
+
+      console.log(`Finished loading MCP configs. ${this.connections.size} connection(s) active.`);
     } catch (error: any) {
       // File doesn't exist or is invalid - that's okay
       if (error.code !== 'ENOENT') {

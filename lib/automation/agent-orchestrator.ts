@@ -119,11 +119,11 @@ export class AgentOrchestrator {
       const connectionManager = getConnectionManager();
 
       // Try to reconnect any stored configs that aren't connected
-      const storedConfigs = connectionManager.getStoredConfigs();
+      const storedConfigs = await connectionManager.getStoredConfigs();
       if (storedConfigs.length > 0) {
         execution.logs.push(`🔄 Checking ${storedConfigs.length} stored MCP connection(s)...`);
         for (const stored of storedConfigs) {
-          const existing = connectionManager.getConnection(stored.serverId);
+          const existing = await connectionManager.getConnection(stored.serverId);
           if (!existing || !existing.connected) {
             try {
               execution.logs.push(`   Reconnecting to ${stored.serverId}...`);
@@ -138,10 +138,10 @@ export class AgentOrchestrator {
         }
       }
 
-      const mcpTools = connectionManager.getAllTools();
+      const mcpTools = await connectionManager.getAllTools();
 
       // Show connection status
-      const connections = connectionManager.getConnections();
+      const connections = await connectionManager.getConnections();
       execution.logs.push(`📡 MCP Status: ${connections.length} server(s) connected, ${mcpTools.length} tool(s) available`);
       for (const conn of connections) {
         execution.logs.push(`   - ${conn.serverName}: ${conn.connected ? '✓ Connected' : '✗ Disconnected'} (${conn.tools.length} tools)`);
@@ -227,7 +227,7 @@ export class AgentOrchestrator {
 
       // Get available MCP tools
       const connectionManager = getConnectionManager();
-      const mcpTools = connectionManager.getAllTools();
+      const mcpTools = await connectionManager.getAllTools();
 
       if (mcpTools.length > 0) {
         execution.logs.push(`🔧 ${mcpTools.length} MCP tools available: ${mcpTools.map(t => t.name).join(', ')}`);

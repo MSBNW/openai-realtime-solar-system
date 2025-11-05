@@ -11,11 +11,11 @@ export async function GET() {
     const connectionManager = getConnectionManager();
 
     // Get stored configs that should be connected
-    const storedConfigs = connectionManager.getStoredConfigs();
+    const storedConfigs = await connectionManager.getStoredConfigs();
 
     // Try to reconnect any that are disconnected
     for (const stored of storedConfigs) {
-      const existing = connectionManager.getConnection(stored.serverId);
+      const existing = await connectionManager.getConnection(stored.serverId);
       if (!existing || !existing.connected) {
         try {
           console.log(`Auto-reconnecting to ${stored.serverId}...`);
@@ -26,7 +26,7 @@ export async function GET() {
       }
     }
 
-    const connections = connectionManager.getConnections();
+    const connections = await connectionManager.getConnections();
 
     return NextResponse.json({
       success: true,
