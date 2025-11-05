@@ -294,9 +294,10 @@ class MCPConnectionManager {
       throw new Error('SSE connection missing URL');
     }
 
+    const requestId = ++this.messageId;
     const request = {
       jsonrpc: '2.0',
-      id: ++this.messageId,
+      id: requestId,
       method,
       params
     };
@@ -316,7 +317,25 @@ class MCPConnectionManager {
       throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
     }
 
-    const data = await response.json();
+    // Parse SSE stream
+    const text = await response.text();
+
+    // SSE format: "event: message\ndata: {...}\n\n"
+    const lines = text.split('\n');
+    let jsonData = '';
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        jsonData = line.substring(6); // Remove "data: " prefix
+        break;
+      }
+    }
+
+    if (!jsonData) {
+      throw new Error('No data found in SSE response');
+    }
+
+    const data = JSON.parse(jsonData);
 
     if (data.error) {
       throw new Error(data.error.message || 'MCP server error');
