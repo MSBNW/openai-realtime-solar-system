@@ -275,9 +275,47 @@ export default function AutomationPage() {
                     )}
                   </div>
 
+                  {/* MCP Tool Calls Section */}
+                  {execution.result.toolCalls && execution.result.toolCalls.length > 0 && (
+                    <div className="bg-blue-500/20 rounded-lg p-4 border border-blue-400/30">
+                      <h4 className="text-blue-200 font-semibold mb-3">🔧 MCP Tool Usage (Verifiable)</h4>
+                      <div className="space-y-3">
+                        {execution.result.toolCalls.map((call: any, idx: number) => (
+                          <div key={idx} className="bg-black/30 rounded p-3 border border-blue-400/20">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className={`text-xs px-2 py-1 rounded ${call.success ? 'bg-green-500/30 text-green-200' : 'bg-red-500/30 text-red-200'}`}>
+                                {call.success ? '✓ Success' : '✗ Failed'}
+                              </span>
+                              <span className="text-blue-100 font-semibold">{call.tool}</span>
+                            </div>
+
+                            <details className="mb-2">
+                              <summary className="text-xs text-blue-300 cursor-pointer hover:text-blue-200">
+                                📤 View Input (what AI sent to tool)
+                              </summary>
+                              <pre className="text-xs text-blue-200 mt-1 whitespace-pre-wrap bg-black/20 p-2 rounded">
+                                {JSON.stringify(call.input, null, 2)}
+                              </pre>
+                            </details>
+
+                            <details>
+                              <summary className="text-xs text-blue-300 cursor-pointer hover:text-blue-200">
+                                📥 View Output (what tool returned)
+                              </summary>
+                              <pre className="text-xs text-blue-200 mt-1 whitespace-pre-wrap bg-black/20 p-2 rounded max-h-60 overflow-y-auto">
+                                {call.success ? JSON.stringify(call.output, null, 2) : call.error}
+                              </pre>
+                            </details>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Main Output */}
                   {execution.result.output && (
                     <div className="bg-black/30 rounded-lg p-4">
+                      <h4 className="text-purple-200 font-semibold mb-2">📝 Final AI Response</h4>
                       <pre className="text-purple-100 text-sm whitespace-pre-wrap leading-relaxed font-sans">
                         {execution.result.output}
                       </pre>

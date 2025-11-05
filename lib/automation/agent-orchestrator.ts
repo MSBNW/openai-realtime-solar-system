@@ -250,6 +250,9 @@ export class AgentOrchestrator {
 
           execution.logs.push('📊 Processing results...');
 
+          // Preserve existing tool calls if any
+          const existingToolCalls = execution.result?.toolCalls || [];
+
           execution.result = {
             taskId: execution.taskId,
             summary: `AI completed ${analysis.taskType} task with ${conversationTurns} turn(s)`,
@@ -259,7 +262,8 @@ export class AgentOrchestrator {
             timestamp: new Date().toISOString(),
             model: 'claude-sonnet-4-5-20250929',
             tokensUsed: totalTokens,
-            toolsUsed: mcpTools.length > 0 ? mcpTools.map(t => t.name) : undefined,
+            toolsAvailable: mcpTools.length > 0 ? mcpTools.map(t => t.name) : [],
+            toolCalls: existingToolCalls,
             conversationTurns
           };
 
@@ -280,15 +284,34 @@ export class AgentOrchestrator {
         const toolResults: any[] = [];
         for (const toolUse of toolUseBlocks) {
           execution.logs.push(`  → Calling ${toolUse.name}...`);
+          execution.logs.push(`     Input: ${JSON.stringify(toolUse.input).substring(0, 200)}${JSON.stringify(toolUse.input).length > 200 ? '...' : ''}`);
 
           try {
             const result = await connectionManager.callTool(toolUse.name, toolUse.input);
+            const resultStr = JSON.stringify(result);
+
             toolResults.push({
               type: 'tool_result',
               tool_use_id: toolUse.id,
-              content: JSON.stringify(result)
+              content: resultStr
             });
+
             execution.logs.push(`  ✓ ${toolUse.name} succeeded`);
+            execution.logs.push(`     Output preview: ${resultStr.substring(0, 300)}${resultStr.length > 300 ? '...' : ''}`);
+
+            // Store detailed tool call info for results display
+            if (!execution.result) {
+              execution.result = { toolCalls: [] };
+            }
+            if (!execution.result.toolCalls) {
+              execution.result.toolCalls = [];
+            }
+            execution.result.toolCalls.push({
+              tool: toolUse.name,
+              input: toolUse.input,
+              output: result,
+              success: true
+            });
           } catch (error: any) {
             toolResults.push({
               type: 'tool_result',
@@ -297,6 +320,20 @@ export class AgentOrchestrator {
               is_error: true
             });
             execution.logs.push(`  ✗ ${toolUse.name} failed: ${error.message}`);
+
+            // Store failed tool call
+            if (!execution.result) {
+              execution.result = { toolCalls: [] };
+            }
+            if (!execution.result.toolCalls) {
+              execution.result.toolCalls = [];
+            }
+            execution.result.toolCalls.push({
+              tool: toolUse.name,
+              input: toolUse.input,
+              error: error.message,
+              success: false
+            });
           }
         }
 
