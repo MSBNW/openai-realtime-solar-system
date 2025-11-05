@@ -9,6 +9,23 @@ import { getConnectionManager } from '@/lib/automation/mcp-connection-manager';
 export async function GET() {
   try {
     const connectionManager = getConnectionManager();
+
+    // Get stored configs that should be connected
+    const storedConfigs = connectionManager.getStoredConfigs();
+
+    // Try to reconnect any that are disconnected
+    for (const stored of storedConfigs) {
+      const existing = connectionManager.getConnection(stored.serverId);
+      if (!existing || !existing.connected) {
+        try {
+          console.log(`Auto-reconnecting to ${stored.serverId}...`);
+          await connectionManager.reconnect(stored.serverId);
+        } catch (error: any) {
+          console.error(`Failed to reconnect to ${stored.serverId}:`, error.message);
+        }
+      }
+    }
+
     const connections = connectionManager.getConnections();
 
     return NextResponse.json({

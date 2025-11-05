@@ -4,6 +4,8 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
+import path from 'path';
+import fs from 'fs/promises';
 
 export interface MCPTool {
   name: string;
@@ -34,7 +36,16 @@ export interface MCPServerConfig {
 
 class MCPConnectionManager {
   private connections: Map<string, MCPConnection> = new Map();
+  private connectionConfigs: Map<string, { config: MCPServerConfig; envVars: Record<string, string> }> = new Map();
   private messageId = 0;
+  private configFile = path.join(process.cwd(), '.mcp-connections.json');
+
+  constructor() {
+    // Load stored configs on startup
+    this.loadConfigs().catch(err => {
+      console.error('Failed to load MCP configs:', err.message);
+    });
+  }
 
   /**
    * Connect to an MCP server
@@ -66,6 +77,12 @@ class MCPConnectionManager {
       throw new Error(`Missing required API keys: ${missingEnvVars.join(', ')}`);
     }
 
+    // Store the config for reconnection
+    this.connectionConfigs.set(config.id, { config, envVars });
+
+    // Persist to disk
+    await this.saveConfigs();
+
     if (config.transport === 'sse') {
       // SSE transport (URL-based like Tavily)
       return this.connectSSE(config, envVars);
@@ -73,6 +90,30 @@ class MCPConnectionManager {
       // stdio transport (local NPX packages)
       return this.connectStdio(config, envVars);
     }
+  }
+
+  /**
+   * Reconnect to a previously connected server (e.g., after hot reload)
+   */
+  async reconnect(serverId: string): Promise<MCPConnection> {
+    const stored = this.connectionConfigs.get(serverId);
+    if (!stored) {
+      throw new Error(`No stored configuration for ${serverId}`);
+    }
+
+    // Try to connect again
+    return this.connect(stored.config, stored.envVars);
+  }
+
+  /**
+   * Get stored connection configs (for persistence)
+   */
+  getStoredConfigs(): Array<{ serverId: string; config: MCPServerConfig; hasApiKey: boolean }> {
+    return Array.from(this.connectionConfigs.entries()).map(([serverId, { config, envVars }]) => ({
+      serverId,
+      config,
+      hasApiKey: config.envVars.every(v => !!envVars[v])
+    }));
   }
 
   /**
@@ -178,7 +219,7 @@ class MCPConnectionManager {
   /**
    * Disconnect from an MCP server
    */
-  disconnect(serverId: string): boolean {
+  disconnect(serverId: string, removeConfig: boolean = true): boolean {
     const connection = this.connections.get(serverId);
     if (!connection) {
       return false;
@@ -191,6 +232,16 @@ class MCPConnectionManager {
 
     // For SSE connections, just remove from map (no process to kill)
     this.connections.delete(serverId);
+
+    // Optionally remove stored config (false when reconnecting)
+    if (removeConfig) {
+      this.connectionConfigs.delete(serverId);
+      // Persist to disk
+      this.saveConfigs().catch(err => {
+        console.error('Failed to save configs after disconnect:', err.message);
+      });
+    }
+
     return true;
   }
 
@@ -431,6 +482,50 @@ class MCPConnectionManager {
       const requestStr = JSON.stringify(request) + '\n';
       connection.process.stdin?.write(requestStr);
     });
+  }
+
+  /**
+   * Save connection configs to disk
+   */
+  private async saveConfigs(): Promise<void> {
+    try {
+      const data = Array.from(this.connectionConfigs.entries()).map(([id, { config, envVars }]) => ({
+        id,
+        config,
+        envVars
+      }));
+
+      await fs.writeFile(this.configFile, JSON.stringify(data, null, 2));
+      console.log(`Saved ${data.length} MCP connection configs`);
+    } catch (error: any) {
+      console.error('Failed to save MCP configs:', error.message);
+    }
+  }
+
+  /**
+   * Load connection configs from disk and reconnect
+   */
+  private async loadConfigs(): Promise<void> {
+    try {
+      const data = await fs.readFile(this.configFile, 'utf-8');
+      const configs = JSON.parse(data);
+
+      console.log(`Loading ${configs.length} stored MCP connection configs...`);
+
+      for (const { id, config, envVars } of configs) {
+        this.connectionConfigs.set(id, { config, envVars });
+
+        // Try to reconnect (don't await, do it in background)
+        this.reconnect(id).catch(err => {
+          console.error(`Failed to auto-reconnect to ${id}:`, err.message);
+        });
+      }
+    } catch (error: any) {
+      // File doesn't exist or is invalid - that's okay
+      if (error.code !== 'ENOENT') {
+        console.error('Failed to load MCP configs:', error.message);
+      }
+    }
   }
 }
 
