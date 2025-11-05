@@ -13,7 +13,7 @@ export const MCP_SERVER_CATALOG = {
     description: 'Multi-agent coordination, swarm management, and task orchestration',
     transport: 'stdio',
     command: 'npx',
-    args: ['claude-flow', 'mcp', 'start'],
+    args: ['-y', 'claude-flow@alpha-v2', 'mcp', 'start'],
     envVars: [],
     capabilities: ['swarm_init', 'agent_spawn', 'task_orchestrate', 'memory_usage', 'performance_monitoring'],
     setupUrl: null
