@@ -131,6 +131,7 @@ export default function IntegrationsPage() {
   };
 
   const categoryColors: Record<string, string> = {
+    orchestration: 'from-indigo-500/20 to-violet-500/20 border-indigo-400/30',
     research: 'from-blue-500/20 to-cyan-500/20 border-blue-400/30',
     development: 'from-green-500/20 to-emerald-500/20 border-green-400/30',
     productivity: 'from-purple-500/20 to-pink-500/20 border-purple-400/30',
@@ -139,6 +140,7 @@ export default function IntegrationsPage() {
   };
 
   const categoryIcons: Record<string, string> = {
+    orchestration: '🤖',
     research: '🔍',
     development: '💻',
     productivity: '📊',

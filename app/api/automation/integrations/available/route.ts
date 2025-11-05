@@ -6,6 +6,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 export const MCP_SERVER_CATALOG = {
+  claude_flow: {
+    id: 'claude_flow',
+    name: 'Claude-Flow Orchestration',
+    category: 'orchestration',
+    description: 'Multi-agent coordination, swarm management, and task orchestration',
+    transport: 'stdio',
+    command: 'npx',
+    args: ['claude-flow', 'mcp', 'start'],
+    envVars: [],
+    capabilities: ['swarm_init', 'agent_spawn', 'task_orchestrate', 'memory_usage', 'performance_monitoring'],
+    setupUrl: null
+  },
   tavily: {
     id: 'tavily',
     name: 'Tavily Search',
