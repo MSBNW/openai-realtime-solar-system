@@ -186,10 +186,19 @@ class MCPConnectionManager {
     const isWindows = process.platform === 'win32';
     const command = isWindows && config.command === 'npx' ? 'npx.cmd' : config.command;
 
+    // Resolve relative paths in args to absolute paths
+    const resolvedArgs = config.args.map(arg => {
+      // If arg looks like a relative path to a local file, resolve it
+      if (arg.endsWith('.js') && !arg.startsWith('/') && !arg.match(/^[A-Z]:\\/)) {
+        return path.resolve(process.cwd(), arg);
+      }
+      return arg;
+    });
+
     // Spawn the MCP server process
-    const serverProcess = spawn(command, config.args, {
+    const serverProcess = spawn(command, resolvedArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: envVars,
+      env: { ...process.env, ...envVars },
       shell: isWindows // Use shell on Windows for better compatibility
     });
 

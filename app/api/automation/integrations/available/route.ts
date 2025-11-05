@@ -6,16 +6,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 export const MCP_SERVER_CATALOG = {
-  claude_flow: {
-    id: 'claude_flow',
-    name: 'Claude-Flow Orchestration',
+  orchestration: {
+    id: 'orchestration',
+    name: 'Multi-Agent Orchestration',
     category: 'orchestration',
     description: 'Multi-agent coordination, swarm management, and task orchestration',
     transport: 'stdio',
-    command: 'npx',
-    args: ['-y', 'claude-flow@alpha-v2', 'mcp', 'start'],
+    command: 'node',
+    args: ['lib/automation/orchestration-mcp-server.js'],
     envVars: [],
-    capabilities: ['swarm_init', 'agent_spawn', 'task_orchestrate', 'memory_usage', 'performance_monitoring'],
+    capabilities: ['swarm_init', 'agent_spawn', 'task_orchestrate', 'agent_status', 'memory_store'],
     setupUrl: null
   },
   tavily: {
