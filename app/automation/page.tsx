@@ -254,10 +254,52 @@ export default function AutomationPage() {
             {execution.result && (
               <div>
                 <h3 className="text-lg font-semibold text-white mb-2">Results</h3>
-                <div className="bg-white/5 rounded-lg p-4 border border-purple-300/20">
-                  <pre className="text-purple-200 text-sm whitespace-pre-wrap">
-                    {JSON.stringify(execution.result, null, 2)}
-                  </pre>
+                <div className="bg-white/5 rounded-lg p-4 border border-purple-300/20 space-y-3">
+                  {/* Summary */}
+                  <div className="bg-green-500/20 rounded p-3 border border-green-400/30">
+                    <div className="text-green-200 font-semibold">{execution.result.summary}</div>
+                    {execution.result.model && (
+                      <div className="text-green-300 text-xs mt-1">Model: {execution.result.model}</div>
+                    )}
+                    {execution.result.tokensUsed && (
+                      <div className="text-green-300 text-xs">Tokens: {execution.result.tokensUsed}</div>
+                    )}
+                  </div>
+
+                  {/* Main Output */}
+                  {execution.result.output && (
+                    <div className="bg-black/30 rounded-lg p-4">
+                      <pre className="text-purple-100 text-sm whitespace-pre-wrap leading-relaxed font-sans">
+                        {execution.result.output}
+                      </pre>
+                    </div>
+                  )}
+
+                  {/* Simulated Output */}
+                  {execution.result.simulatedOutput && (
+                    <div className="bg-black/30 rounded-lg p-4">
+                      <pre className="text-purple-100 text-sm whitespace-pre-wrap leading-relaxed font-sans">
+                        {execution.result.simulatedOutput}
+                      </pre>
+                    </div>
+                  )}
+
+                  {/* Note */}
+                  {execution.result.note && (
+                    <div className="bg-yellow-500/20 rounded p-3 border border-yellow-400/30">
+                      <div className="text-yellow-200 text-sm">{execution.result.note}</div>
+                    </div>
+                  )}
+
+                  {/* Raw JSON (collapsed by default) */}
+                  <details className="cursor-pointer">
+                    <summary className="text-purple-300 text-sm hover:text-purple-200">
+                      View Raw JSON
+                    </summary>
+                    <pre className="text-purple-300 text-xs mt-2 whitespace-pre-wrap">
+                      {JSON.stringify(execution.result, null, 2)}
+                    </pre>
+                  </details>
                 </div>
               </div>
             )}
