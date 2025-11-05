@@ -19,6 +19,7 @@ export interface MCPConnection {
   transport: 'stdio' | 'sse';
   process?: ChildProcess;
   url?: string;
+  authHeaders?: Record<string, string>;
   tools: MCPTool[];
   connected: boolean;
   error?: string;
@@ -32,6 +33,7 @@ export interface MCPServerConfig {
   args?: string[];
   url?: string;
   envVars: string[];
+  authType?: 'query' | 'basic'; // 'query' for Tavily, 'basic' for DataForSEO
 }
 
 class MCPConnectionManager {
@@ -127,32 +129,51 @@ class MCPConnectionManager {
   }
 
   /**
-   * Connect to an SSE-based MCP server (like Tavily)
+   * Connect to an SSE-based MCP server (like Tavily or DataForSEO)
    */
   private async connectSSE(config: MCPServerConfig, envVars: Record<string, string>): Promise<MCPConnection> {
     if (!config.url) {
       throw new Error('SSE transport requires a URL');
     }
 
-    // Build URL with API key as query parameter
-    const url = new URL(config.url);
-    for (const envVar of config.envVars) {
-      const value = envVars[envVar];
-      if (value) {
-        // Convert env var name to query param (e.g., TAVILY_API_KEY -> tavilyApiKey)
-        const paramName = envVar
-          .split('_')
-          .map((part, i) => i === 0 ? part.toLowerCase() : part.charAt(0) + part.slice(1).toLowerCase())
-          .join('');
-        url.searchParams.set(paramName, value);
+    const authType = config.authType || 'query'; // Default to query params
+    let url = config.url;
+    let authHeaders: Record<string, string> | undefined;
+
+    if (authType === 'basic') {
+      // Basic Auth (DataForSEO) - credentials in Authorization header
+      const username = envVars['DATAFORSEO_LOGIN'] || envVars['DATAFORSEO_USERNAME'];
+      const password = envVars['DATAFORSEO_PASSWORD'];
+
+      if (username && password) {
+        const credentials = Buffer.from(`${username}:${password}`).toString('base64');
+        authHeaders = {
+          'Authorization': `Basic ${credentials}`
+        };
       }
+    } else {
+      // Query param auth (Tavily) - API key in URL
+      const urlObj = new URL(config.url);
+      for (const envVar of config.envVars) {
+        const value = envVars[envVar];
+        if (value) {
+          // Convert env var name to query param (e.g., TAVILY_API_KEY -> tavilyApiKey)
+          const paramName = envVar
+            .split('_')
+            .map((part, i) => i === 0 ? part.toLowerCase() : part.charAt(0) + part.slice(1).toLowerCase())
+            .join('');
+          urlObj.searchParams.set(paramName, value);
+        }
+      }
+      url = urlObj.toString();
     }
 
     const connection: MCPConnection = {
       serverId: config.id,
       serverName: config.name,
       transport: 'sse',
-      url: url.toString(),
+      url,
+      authHeaders,
       tools: [],
       connected: false
     };
@@ -380,12 +401,19 @@ class MCPConnectionManager {
       params
     };
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+    };
+
+    // Add auth headers if present (e.g., Basic Auth for DataForSEO)
+    if (connection.authHeaders) {
+      Object.assign(headers, connection.authHeaders);
+    }
+
     const response = await fetch(connection.url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json, text/event-stream',
-      },
+      headers,
       body: JSON.stringify(request)
     });
 

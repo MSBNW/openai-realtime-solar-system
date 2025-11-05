@@ -26,8 +26,21 @@ export const MCP_SERVER_CATALOG = {
     transport: 'sse',
     url: 'https://mcp.tavily.com/mcp/',
     envVars: ['TAVILY_API_KEY'],
+    authType: 'query',
     capabilities: ['web_search', 'news_search', 'research'],
     setupUrl: 'https://tavily.com/'
+  },
+  dataforseo: {
+    id: 'dataforseo',
+    name: 'DataForSEO',
+    category: 'research',
+    description: 'SEO data, SERP analysis, keyword research, and competitor intelligence',
+    transport: 'sse',
+    url: 'https://mcp.dataforseo.com/mcp',
+    envVars: ['DATAFORSEO_LOGIN', 'DATAFORSEO_PASSWORD'],
+    authType: 'basic',
+    capabilities: ['serp_analysis', 'keyword_research', 'competitor_analysis', 'backlink_data', 'rank_tracking'],
+    setupUrl: 'https://app.dataforseo.com/api-access'
   },
   github: {
     id: 'github',
