@@ -108,6 +108,8 @@ export default function AutomationPage() {
           if (data.execution.status === 'completed' || data.execution.status === 'failed') {
             clearInterval(pollInterval);
             loadTasks();
+            // Clear input after task completes so user can type follow-up
+            setTask('');
           }
         }
       } catch (error) {
@@ -473,6 +475,48 @@ export default function AutomationPage() {
                       {JSON.stringify(execution.result, null, 2)}
                     </pre>
                   </details>
+                </div>
+              </div>
+            )}
+
+            {/* Follow-up Prompt */}
+            {execution.status === 'completed' && conversationId && !loading && (
+              <div className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-lg p-6 border-2 border-purple-400/50">
+                <div className="flex items-start gap-4">
+                  <div className="text-4xl">💬</div>
+                  <div className="flex-1">
+                    <h3 className="text-xl font-bold text-white mb-2">Continue the Conversation</h3>
+                    <p className="text-purple-200 mb-4">
+                      This conversation is active! You can now:
+                    </p>
+                    <ul className="space-y-2 text-sm text-purple-200 mb-4">
+                      <li className="flex items-start gap-2">
+                        <span className="text-green-400">✓</span>
+                        <span>Ask me to refine or expand on specific sections</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-green-400">✓</span>
+                        <span>Request implementation (e.g., "Create the first blog post")</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-green-400">✓</span>
+                        <span>Ask me to send results via email or post to WordPress</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-green-400">✓</span>
+                        <span>Request additional analysis or research</span>
+                      </li>
+                    </ul>
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-purple-300">Scroll up to the input box to continue →</span>
+                      <button
+                        onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+                        className="px-4 py-2 bg-purple-500/30 hover:bg-purple-500/40 text-purple-100 rounded-lg border border-purple-400/30 transition-colors"
+                      >
+                        ↑ Go to Input
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
