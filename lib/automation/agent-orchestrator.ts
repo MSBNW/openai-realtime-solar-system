@@ -116,7 +116,9 @@ export class AgentOrchestrator {
       execution.logs.push(`Estimated time: ${analysis.estimatedTime} minutes`);
 
       // Build prompt for AI execution
-      const prompt = this.buildPrompt(taskDescription, analysis);
+      const connectionManager = getConnectionManager();
+      const mcpTools = connectionManager.getAllTools();
+      const prompt = this.buildPrompt(taskDescription, analysis, mcpTools);
 
       // Store prompt
       await fs.writeFile(
@@ -522,10 +524,21 @@ Task has been completed successfully with all requirements addressed.
   /**
    * Build prompt for AI agents
    */
-  private buildPrompt(taskDescription: string, analysis: TaskAnalysis): string {
+  private buildPrompt(taskDescription: string, analysis: TaskAnalysis, mcpTools: any[]): string {
     const agentRoles = analysis.requiredAgents
       .map(a => `- ${a.role}: ${a.responsibility}`)
       .join('\n');
+
+    let toolsSection = '';
+    if (mcpTools.length > 0) {
+      toolsSection = `
+
+## Available Tools
+You have access to the following MCP tools that can help complete this task:
+${mcpTools.map(t => `- **${t.name}**: ${t.description}`).join('\n')}
+
+**IMPORTANT**: If the task requires current information, web searches, or data that you don't have, you MUST use the appropriate tools. Don't make up information or provide generic answers when tools are available.`;
+    }
 
     return `# Task Execution Brief
 
@@ -539,6 +552,7 @@ ${taskDescription}
 
 ## Agent Team
 ${agentRoles}
+${toolsSection}
 
 ## Execution Steps
 ${analysis.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
@@ -547,7 +561,7 @@ ${analysis.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
 This is part of the OpenAI Realtime Solar System project, a Next.js application showcasing interactive 3D solar system visualization.
 
 ## Instructions
-Execute this task efficiently and provide detailed results. Store your findings in a structured format.
+Execute this task efficiently and provide detailed results. ${mcpTools.length > 0 ? 'USE THE AVAILABLE TOOLS when you need current information or external data.' : ''} Store your findings in a structured format.
 
 ## Deliverables
 Provide clear, actionable results that can be used immediately. Include:
