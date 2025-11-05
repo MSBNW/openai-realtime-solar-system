@@ -182,10 +182,15 @@ class MCPConnectionManager {
       throw new Error('stdio transport requires command and args');
     }
 
+    // On Windows, we need to use the .cmd extension for npx
+    const isWindows = process.platform === 'win32';
+    const command = isWindows && config.command === 'npx' ? 'npx.cmd' : config.command;
+
     // Spawn the MCP server process
-    const serverProcess = spawn(config.command, config.args, {
+    const serverProcess = spawn(command, config.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: envVars
+      env: envVars,
+      shell: isWindows // Use shell on Windows for better compatibility
     });
 
     const connection: MCPConnection = {
