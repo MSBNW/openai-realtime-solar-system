@@ -117,7 +117,40 @@ export class AgentOrchestrator {
 
       // Build prompt for AI execution
       const connectionManager = getConnectionManager();
+
+      // Try to reconnect any stored configs that aren't connected
+      const storedConfigs = connectionManager.getStoredConfigs();
+      if (storedConfigs.length > 0) {
+        execution.logs.push(`🔄 Checking ${storedConfigs.length} stored MCP connection(s)...`);
+        for (const stored of storedConfigs) {
+          const existing = connectionManager.getConnection(stored.serverId);
+          if (!existing || !existing.connected) {
+            try {
+              execution.logs.push(`   Reconnecting to ${stored.serverId}...`);
+              await connectionManager.reconnect(stored.serverId);
+              execution.logs.push(`   ✓ Reconnected to ${stored.serverId}`);
+            } catch (error: any) {
+              execution.logs.push(`   ✗ Failed to reconnect to ${stored.serverId}: ${error.message}`);
+            }
+          } else {
+            execution.logs.push(`   ✓ ${stored.serverId} already connected`);
+          }
+        }
+      }
+
       const mcpTools = connectionManager.getAllTools();
+
+      // Show connection status
+      const connections = connectionManager.getConnections();
+      execution.logs.push(`📡 MCP Status: ${connections.length} server(s) connected, ${mcpTools.length} tool(s) available`);
+      for (const conn of connections) {
+        execution.logs.push(`   - ${conn.serverName}: ${conn.connected ? '✓ Connected' : '✗ Disconnected'} (${conn.tools.length} tools)`);
+      }
+
+      if (mcpTools.length === 0) {
+        execution.logs.push(`⚠️  WARNING: No MCP tools available. Connect to MCP servers at /automation/integrations`);
+      }
+
       const prompt = this.buildPrompt(taskDescription, analysis, mcpTools);
 
       // Store prompt
