@@ -14,7 +14,9 @@ export interface MCPTool {
 export interface MCPConnection {
   serverId: string;
   serverName: string;
-  process: ChildProcess;
+  transport: 'stdio' | 'sse';
+  process?: ChildProcess;
+  url?: string;
   tools: MCPTool[];
   connected: boolean;
   error?: string;
@@ -23,8 +25,10 @@ export interface MCPConnection {
 export interface MCPServerConfig {
   id: string;
   name: string;
-  command: string;
-  args: string[];
+  transport: 'stdio' | 'sse';
+  command?: string;
+  args?: string[];
+  url?: string;
   envVars: string[];
 }
 
@@ -62,6 +66,71 @@ class MCPConnectionManager {
       throw new Error(`Missing required API keys: ${missingEnvVars.join(', ')}`);
     }
 
+    if (config.transport === 'sse') {
+      // SSE transport (URL-based like Tavily)
+      return this.connectSSE(config, envVars);
+    } else {
+      // stdio transport (local NPX packages)
+      return this.connectStdio(config, envVars);
+    }
+  }
+
+  /**
+   * Connect to an SSE-based MCP server (like Tavily)
+   */
+  private async connectSSE(config: MCPServerConfig, envVars: Record<string, string>): Promise<MCPConnection> {
+    if (!config.url) {
+      throw new Error('SSE transport requires a URL');
+    }
+
+    // Build URL with API key as query parameter
+    const url = new URL(config.url);
+    for (const envVar of config.envVars) {
+      const value = envVars[envVar];
+      if (value) {
+        // Convert env var name to query param (e.g., TAVILY_API_KEY -> tavilyApiKey)
+        const paramName = envVar
+          .split('_')
+          .map((part, i) => i === 0 ? part.toLowerCase() : part.charAt(0) + part.slice(1).toLowerCase())
+          .join('');
+        url.searchParams.set(paramName, value);
+      }
+    }
+
+    const connection: MCPConnection = {
+      serverId: config.id,
+      serverName: config.name,
+      transport: 'sse',
+      url: url.toString(),
+      tools: [],
+      connected: false
+    };
+
+    this.connections.set(config.id, connection);
+
+    // Initialize the connection
+    try {
+      await this.initializeSSE(connection);
+      await this.discoverToolsSSE(connection);
+      connection.connected = true;
+      console.log(`Connected to SSE MCP server ${config.id}, discovered ${connection.tools.length} tools`);
+    } catch (error: any) {
+      connection.error = error.message;
+      connection.connected = false;
+      throw error;
+    }
+
+    return connection;
+  }
+
+  /**
+   * Connect to a stdio-based MCP server (local NPX packages)
+   */
+  private async connectStdio(config: MCPServerConfig, envVars: Record<string, string>): Promise<MCPConnection> {
+    if (!config.command || !config.args) {
+      throw new Error('stdio transport requires command and args');
+    }
+
     // Spawn the MCP server process
     const serverProcess = spawn(config.command, config.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -71,6 +140,7 @@ class MCPConnectionManager {
     const connection: MCPConnection = {
       serverId: config.id,
       serverName: config.name,
+      transport: 'stdio',
       process: serverProcess,
       tools: [],
       connected: false
@@ -92,10 +162,10 @@ class MCPConnectionManager {
 
     // Initialize the connection
     try {
-      await this.initialize(connection);
-      await this.discoverTools(connection);
+      await this.initializeStdio(connection);
+      await this.discoverToolsStdio(connection);
       connection.connected = true;
-      console.log(`Connected to MCP server ${config.id}, discovered ${connection.tools.length} tools`);
+      console.log(`Connected to stdio MCP server ${config.id}, discovered ${connection.tools.length} tools`);
     } catch (error: any) {
       connection.error = error.message;
       connection.connected = false;
@@ -114,10 +184,12 @@ class MCPConnectionManager {
       return false;
     }
 
-    if (connection.process) {
+    // Kill process for stdio connections
+    if (connection.transport === 'stdio' && connection.process) {
       connection.process.kill();
     }
 
+    // For SSE connections, just remove from map (no process to kill)
     this.connections.delete(serverId);
     return true;
   }
@@ -166,17 +238,24 @@ class MCPConnectionManager {
       throw new Error(`Tool ${toolName} not found in any connected server`);
     }
 
-    return this.sendRequest(targetConnection, 'tools/call', {
-      name: toolName,
-      arguments: parameters
-    });
+    if (targetConnection.transport === 'sse') {
+      return this.sendRequestSSE(targetConnection, 'tools/call', {
+        name: toolName,
+        arguments: parameters
+      });
+    } else {
+      return this.sendRequestStdio(targetConnection, 'tools/call', {
+        name: toolName,
+        arguments: parameters
+      });
+    }
   }
 
   /**
-   * Initialize connection with MCP server
+   * Initialize SSE connection
    */
-  private async initialize(connection: MCPConnection): Promise<void> {
-    const response = await this.sendRequest(connection, 'initialize', {
+  private async initializeSSE(connection: MCPConnection): Promise<void> {
+    const response = await this.sendRequestSSE(connection, 'initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {
         tools: {}
@@ -193,10 +272,10 @@ class MCPConnectionManager {
   }
 
   /**
-   * Discover available tools from the server
+   * Discover tools from SSE server
    */
-  private async discoverTools(connection: MCPConnection): Promise<void> {
-    const response = await this.sendRequest(connection, 'tools/list', {});
+  private async discoverToolsSSE(connection: MCPConnection): Promise<void> {
+    const response = await this.sendRequestSSE(connection, 'tools/list', {});
 
     if (response.tools && Array.isArray(response.tools)) {
       connection.tools = response.tools.map((tool: any) => ({
@@ -208,9 +287,80 @@ class MCPConnectionManager {
   }
 
   /**
-   * Send a JSON-RPC request to an MCP server
+   * Send JSON-RPC request to SSE server via HTTP
    */
-  private sendRequest(connection: MCPConnection, method: string, params: any): Promise<any> {
+  private async sendRequestSSE(connection: MCPConnection, method: string, params: any): Promise<any> {
+    if (!connection.url) {
+      throw new Error('SSE connection missing URL');
+    }
+
+    const request = {
+      jsonrpc: '2.0',
+      id: ++this.messageId,
+      method,
+      params
+    };
+
+    const response = await fetch(connection.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+      throw new Error(data.error.message || 'MCP server error');
+    }
+
+    return data.result;
+  }
+
+  /**
+   * Initialize stdio connection
+   */
+  private async initializeStdio(connection: MCPConnection): Promise<void> {
+    const response = await this.sendRequestStdio(connection, 'initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {
+        tools: {}
+      },
+      clientInfo: {
+        name: 'solar-system-automation',
+        version: '1.0.0'
+      }
+    });
+
+    if (!response.capabilities) {
+      throw new Error('Server did not return capabilities');
+    }
+  }
+
+  /**
+   * Discover tools from stdio server
+   */
+  private async discoverToolsStdio(connection: MCPConnection): Promise<void> {
+    const response = await this.sendRequestStdio(connection, 'tools/list', {});
+
+    if (response.tools && Array.isArray(response.tools)) {
+      connection.tools = response.tools.map((tool: any) => ({
+        name: tool.name,
+        description: tool.description || '',
+        inputSchema: tool.inputSchema || {}
+      }));
+    }
+  }
+
+  /**
+   * Send a JSON-RPC request to a stdio MCP server
+   */
+  private sendRequestStdio(connection: MCPConnection, method: string, params: any): Promise<any> {
     return new Promise((resolve, reject) => {
       const id = ++this.messageId;
       const request = {
