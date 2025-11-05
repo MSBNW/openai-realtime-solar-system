@@ -35,7 +35,7 @@ class MCPConnectionManager {
   /**
    * Connect to an MCP server
    */
-  async connect(config: MCPServerConfig): Promise<MCPConnection> {
+  async connect(config: MCPServerConfig, userEnvVars: Record<string, string> = {}): Promise<MCPConnection> {
     // Check if already connected
     if (this.connections.has(config.id)) {
       const existing = this.connections.get(config.id)!;
@@ -46,16 +46,26 @@ class MCPConnectionManager {
       this.disconnect(config.id);
     }
 
+    // Build environment variables: prioritize user-provided, then fall back to process.env
+    const envVars: Record<string, string> = { ...process.env } as Record<string, string>;
+
+    // Add user-provided environment variables
+    for (const key of Object.keys(userEnvVars)) {
+      if (userEnvVars[key]) {
+        envVars[key] = userEnvVars[key];
+      }
+    }
+
     // Check required environment variables
-    const missingEnvVars = config.envVars.filter(v => !process.env[v]);
+    const missingEnvVars = config.envVars.filter(v => !envVars[v]);
     if (missingEnvVars.length > 0) {
-      throw new Error(`Missing required environment variables: ${missingEnvVars.join(', ')}`);
+      throw new Error(`Missing required API keys: ${missingEnvVars.join(', ')}`);
     }
 
     // Spawn the MCP server process
     const serverProcess = spawn(config.command, config.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env }
+      env: envVars
     });
 
     const connection: MCPConnection = {

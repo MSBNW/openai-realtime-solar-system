@@ -9,7 +9,7 @@ import { MCP_SERVER_CATALOG } from '../available/route';
 
 export async function POST(request: NextRequest) {
   try {
-    const { serverId } = await request.json();
+    const { serverId, envVars } = await request.json();
 
     if (!serverId) {
       return NextResponse.json(
@@ -28,8 +28,8 @@ export async function POST(request: NextRequest) {
 
     const connectionManager = getConnectionManager();
 
-    // Attempt to connect
-    const connection = await connectionManager.connect(serverConfig);
+    // Attempt to connect with user-provided environment variables
+    const connection = await connectionManager.connect(serverConfig, envVars || {});
 
     return NextResponse.json({
       success: true,

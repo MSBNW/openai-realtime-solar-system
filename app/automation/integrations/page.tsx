@@ -22,6 +22,7 @@ export default function IntegrationsPage() {
   const [servers, setServers] = useState<ServerWithStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [apiKeys, setApiKeys] = useState<Record<string, Record<string, string>>>({});
 
   useEffect(() => {
     loadServers();
@@ -76,7 +77,10 @@ export default function IntegrationsPage() {
       const res = await fetch('/api/automation/integrations/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverId })
+        body: JSON.stringify({
+          serverId,
+          envVars: apiKeys[serverId] || {}
+        })
       });
       const data = await res.json();
 
@@ -91,6 +95,16 @@ export default function IntegrationsPage() {
     } finally {
       setConnecting(null);
     }
+  };
+
+  const handleApiKeyChange = (serverId: string, envVar: string, value: string) => {
+    setApiKeys(prev => ({
+      ...prev,
+      [serverId]: {
+        ...prev[serverId],
+        [envVar]: value
+      }
+    }));
   };
 
   const handleDisconnect = async (serverId: string) => {
@@ -168,7 +182,7 @@ export default function IntegrationsPage() {
                 <li>Databases for data analysis</li>
               </ul>
               <p className="text-blue-100/70 text-xs italic mt-3">
-                💡 Get API keys from the providers, add them to your .env.local, then click Connect!
+                💡 Get API keys from the provider (click "Get API Key →"), enter them in the fields below, then click Connect!
               </p>
             </div>
           </div>
@@ -215,15 +229,23 @@ export default function IntegrationsPage() {
                     </div>
 
                     <div>
-                      <div className="text-purple-300 text-xs font-semibold mb-1">
-                        Required Environment Variables:
+                      <div className="text-purple-300 text-xs font-semibold mb-2">
+                        Required API Keys:
                       </div>
-                      <div className="space-y-1">
+                      <div className="space-y-2">
                         {server.envVars.map((envVar) => (
-                          <div key={envVar} className="text-xs">
-                            <code className="bg-black/30 px-2 py-1 rounded text-purple-200">
+                          <div key={envVar} className="space-y-1">
+                            <label className="text-xs text-purple-300">
                               {envVar}
-                            </code>
+                            </label>
+                            <input
+                              type="password"
+                              value={apiKeys[server.id]?.[envVar] || ''}
+                              onChange={(e) => handleApiKeyChange(server.id, envVar, e.target.value)}
+                              placeholder={`Enter your ${envVar}`}
+                              disabled={server.connected}
+                              className="w-full px-3 py-1.5 rounded bg-black/30 border border-purple-300/30 text-purple-100 text-xs placeholder-purple-300/50 focus:outline-none focus:border-purple-400 disabled:opacity-50"
+                            />
                           </div>
                         ))}
                       </div>
