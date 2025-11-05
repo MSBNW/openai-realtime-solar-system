@@ -294,12 +294,34 @@ export default function AutomationPage() {
           </div>
         )}
 
+        {/* Setup Instructions */}
+        <div className="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 backdrop-blur-lg rounded-lg p-6 border border-yellow-400/30">
+          <div className="flex items-start gap-4">
+            <div className="text-3xl">⚡</div>
+            <div className="flex-1 space-y-2">
+              <h3 className="text-lg font-bold text-yellow-200">Enable Real AI Execution</h3>
+              <p className="text-yellow-100/80 text-sm">
+                Currently running in <strong>simulation mode</strong>. To execute tasks with real AI:
+              </p>
+              <ol className="text-yellow-100/90 text-sm space-y-1 list-decimal list-inside">
+                <li>Install Anthropic SDK: <code className="bg-black/30 px-2 py-0.5 rounded">npm install @anthropic-ai/sdk</code></li>
+                <li>Get API key from <a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer" className="text-yellow-300 hover:underline">console.anthropic.com</a></li>
+                <li>Create <code className="bg-black/30 px-2 py-0.5 rounded">.env.local</code> file with: <code className="bg-black/30 px-2 py-0.5 rounded">ANTHROPIC_API_KEY=your-key</code></li>
+                <li>Restart dev server: <code className="bg-black/30 px-2 py-0.5 rounded">npm run dev</code></li>
+              </ol>
+              <p className="text-yellow-100/70 text-xs italic">
+                💡 Simulation mode still works great for testing the UI and workflow!
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* Info Footer */}
         <div className="bg-white/5 backdrop-blur-lg rounded-lg p-6 border border-purple-300/20 text-center">
           <p className="text-purple-200 text-sm">
-            This is an MVP demonstration of a universal business automation platform.
+            This is a working MVP of a universal business automation platform.
             <br />
-            The system uses AI agent swarms coordinated by Claude-Flow to execute tasks dynamically.
+            The system analyzes tasks, creates agent crews, and executes them dynamically.
           </p>
         </div>
       </div>

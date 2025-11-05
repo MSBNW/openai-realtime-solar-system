@@ -1,6 +1,6 @@
 /**
- * Agent Orchestrator - MVP Implementation
- * Coordinates AI agents using claude-flow to execute tasks
+ * Agent Orchestrator - Real Implementation
+ * Coordinates AI agents using Anthropic API to execute tasks
  */
 
 import { exec } from 'child_process';
@@ -10,6 +10,15 @@ import path from 'path';
 import fs from 'fs/promises';
 
 const execAsync = promisify(exec);
+
+// Import Anthropic if available
+let Anthropic: any;
+try {
+  Anthropic = require('@anthropic-ai/sdk');
+} catch (e) {
+  // Will install later
+  Anthropic = null;
+}
 
 export interface TaskExecution {
   taskId: string;
@@ -69,7 +78,7 @@ export class AgentOrchestrator {
   }
 
   /**
-   * Run the task using claude-flow
+   * Run the task using Anthropic API
    */
   private async runTask(
     taskId: string,
@@ -105,7 +114,7 @@ export class AgentOrchestrator {
       execution.logs.push(`Agents assigned: ${analysis.requiredAgents.map(a => a.role).join(', ')}`);
       execution.logs.push(`Estimated time: ${analysis.estimatedTime} minutes`);
 
-      // Build prompt for claude-flow
+      // Build prompt for AI execution
       const prompt = this.buildPrompt(taskDescription, analysis);
 
       // Store prompt
@@ -114,56 +123,272 @@ export class AgentOrchestrator {
         prompt
       );
 
-      execution.logs.push('Initializing AI agent swarm...');
+      execution.logs.push('Initializing AI execution...');
 
-      // Execute using claude-flow
-      const swarmCommand = this.buildSwarmCommand(taskWorkspace, prompt, analysis);
+      // Check if Anthropic API key is available
+      if (!process.env.ANTHROPIC_API_KEY) {
+        execution.logs.push('⚠️  No ANTHROPIC_API_KEY found - running in simulation mode');
+        execution.logs.push('📝 To enable real AI execution:');
+        execution.logs.push('   1. Get API key from https://console.anthropic.com/');
+        execution.logs.push('   2. Add to .env.local: ANTHROPIC_API_KEY=your-key-here');
+        execution.logs.push('   3. Restart the dev server');
+        execution.logs.push('');
 
-      execution.logs.push(`Command: ${swarmCommand}`);
+        // Simulate execution
+        await this.simulateExecution(execution, taskDescription, analysis);
 
-      try {
-        const { stdout, stderr } = await execAsync(swarmCommand, {
-          cwd: taskWorkspace,
-          timeout: 5 * 60 * 1000, // 5 minute timeout
-          env: {
-            ...process.env,
-            TASK_ID: taskId
-          }
-        });
+      } else if (!Anthropic) {
+        execution.logs.push('⚠️  Anthropic SDK not installed - running in simulation mode');
+        execution.logs.push('📦 To install: npm install @anthropic-ai/sdk');
+        execution.logs.push('');
 
-        if (stdout) {
-          execution.logs.push('Swarm output:');
-          execution.logs.push(stdout);
-        }
+        // Simulate execution
+        await this.simulateExecution(execution, taskDescription, analysis);
 
-        if (stderr) {
-          execution.logs.push('Warnings:');
-          execution.logs.push(stderr);
-        }
-      } catch (execError: any) {
-        // Claude-flow may exit with code 1 even on success
-        if (execError.stdout) {
-          execution.logs.push('Output:');
-          execution.logs.push(execError.stdout);
-        }
+      } else {
+        // Real AI execution
+        execution.logs.push('🤖 Executing with real AI agents...');
+        await this.executeWithAnthropic(execution, taskDescription, analysis, prompt);
       }
 
-      // Try to retrieve results from memory
-      execution.logs.push('Retrieving results from agent memory...');
+      // Save result
+      const result = execution.result || {
+        taskId,
+        summary: 'Task execution completed',
+        timestamp: new Date().toISOString()
+      };
 
-      const result = await this.retrieveResults(taskWorkspace, taskId);
+      await fs.writeFile(
+        path.join(taskWorkspace, 'result.json'),
+        JSON.stringify(result, null, 2)
+      );
 
-      execution.result = result;
       execution.status = 'completed';
       execution.endTime = new Date();
-      execution.logs.push(`Task completed at ${execution.endTime.toISOString()}`);
+      execution.logs.push(`✅ Task completed at ${execution.endTime.toISOString()}`);
 
     } catch (error: any) {
       execution.status = 'failed';
       execution.error = error.message;
       execution.endTime = new Date();
-      execution.logs.push(`Error: ${error.message}`);
+      execution.logs.push(`❌ Error: ${error.message}`);
     }
+  }
+
+  /**
+   * Execute task using Anthropic API
+   */
+  private async executeWithAnthropic(
+    execution: TaskExecution,
+    taskDescription: string,
+    analysis: TaskAnalysis,
+    prompt: string
+  ): Promise<void> {
+    try {
+      const anthropic = new Anthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY
+      });
+
+      execution.logs.push('🔄 Sending request to Claude API...');
+
+      const message = await anthropic.messages.create({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 8096,
+        messages: [{
+          role: 'user',
+          content: prompt
+        }]
+      });
+
+      execution.logs.push('✨ Received response from AI');
+
+      const responseText = message.content
+        .filter((block: any) => block.type === 'text')
+        .map((block: any) => block.text)
+        .join('\n');
+
+      execution.logs.push('📊 Processing results...');
+
+      execution.result = {
+        taskId: execution.taskId,
+        summary: `AI completed ${analysis.taskType} task`,
+        output: responseText,
+        agents: analysis.requiredAgents.map(a => a.role),
+        complexity: analysis.complexity,
+        timestamp: new Date().toISOString(),
+        model: 'claude-3-5-sonnet-20241022',
+        tokensUsed: message.usage.input_tokens + message.usage.output_tokens
+      };
+
+      execution.logs.push(`💬 Tokens used: ${message.usage.input_tokens + message.usage.output_tokens}`);
+
+    } catch (error: any) {
+      execution.logs.push(`❌ AI execution failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Simulate execution for demo purposes
+   */
+  private async simulateExecution(
+    execution: TaskExecution,
+    taskDescription: string,
+    analysis: TaskAnalysis
+  ): Promise<void> {
+    execution.logs.push('🎭 Simulating AI agent execution...');
+
+    // Simulate agent work
+    for (const agent of analysis.requiredAgents) {
+      execution.logs.push(`👤 ${agent.role}: ${agent.responsibility}`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    execution.logs.push('');
+    execution.logs.push('📝 Generating simulated results...');
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    execution.result = {
+      taskId: execution.taskId,
+      summary: `Simulated ${analysis.taskType} task completion`,
+      note: 'This is a simulated result. Add ANTHROPIC_API_KEY to .env.local for real AI execution.',
+      taskDescription,
+      agents: analysis.requiredAgents.map(a => a.role),
+      steps: analysis.steps,
+      simulatedOutput: this.generateSimulatedOutput(taskDescription, analysis),
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  /**
+   * Generate simulated output based on task type
+   */
+  private generateSimulatedOutput(description: string, analysis: TaskAnalysis): string {
+    const outputs: Record<string, string> = {
+      marketing: `# Marketing Plan
+
+## Executive Summary
+This plan outlines a comprehensive marketing strategy for the solar system visualization project.
+
+## Target Audience
+- Science enthusiasts
+- Education professionals
+- Web developers interested in 3D graphics
+- Astronomy hobbyists
+
+## Marketing Channels
+1. Social Media (Twitter, LinkedIn, Reddit r/webdev)
+2. Developer communities (Dev.to, Hacker News)
+3. Educational platforms (Khan Academy, Coursera partnerships)
+4. Tech blogs and publications
+
+## Content Strategy
+- Weekly blog posts about 3D web development
+- Video tutorials on interactive astronomy visualizations
+- Case studies of educational applications
+- Open source community engagement
+
+## Success Metrics
+- 10K+ unique visitors in first month
+- 1K+ GitHub stars
+- Featured on major tech publications`,
+
+      code_analysis: `# Code Analysis Report
+
+## Architecture Overview
+- Next.js 15 application with React 19
+- 3D visualization using Spline
+- Real-time data with WebRTC
+- OpenAI API integration
+
+## Code Quality Assessment
+✅ Modern TypeScript implementation
+✅ Component-based architecture
+✅ Responsive design with Tailwind
+⚠️  Could benefit from unit tests
+⚠️  API error handling could be improved
+
+## Recommendations
+1. Add comprehensive test coverage
+2. Implement error boundaries
+3. Add loading states for async operations
+4. Consider code splitting for performance
+5. Add accessibility features (ARIA labels)`,
+
+      documentation: `# API & Component Documentation
+
+## API Endpoints
+
+### POST /api/session
+Creates a new realtime session
+- Returns: { client_secret, id }
+
+### POST /api/automation/execute
+Executes an automation task
+- Body: { task: string }
+- Returns: { taskId, analysis, execution }
+
+## Component Structure
+
+### Main Components
+- App: Main application container
+- Scene: 3D visualization scene
+- Controls: User interaction controls
+- Logs: Real-time logging display
+
+### Automation Components
+- AutomationPage: Task submission and monitoring
+- AutomationLink: Navigation component
+- TaskAnalyzer: Task intelligence engine
+- AgentOrchestrator: Execution coordinator`,
+
+      automation: `# Workflow Automation Plan
+
+## Current Workflow Analysis
+- Manual task execution
+- Limited coordination
+- No automation framework
+
+## Proposed Automation
+1. Task Intelligence: Auto-analyze and categorize requests
+2. Agent Coordination: Dynamic crew composition
+3. Real-time Monitoring: Live progress tracking
+4. Result Delivery: Structured output format
+
+## Implementation Steps
+1. Install Anthropic SDK
+2. Configure API keys
+3. Connect MCP servers (optional)
+4. Test with sample tasks
+5. Monitor and optimize
+
+## Expected Benefits
+- 10x faster task completion
+- Reduced manual work
+- Consistent quality
+- Scalable execution`,
+
+      general: `# Task Completion Report
+
+## Task: ${description}
+
+## Approach
+Our AI agent team analyzed and executed this task using the following methodology:
+1. Understanding the requirements
+2. Breaking down into subtasks
+3. Parallel execution where possible
+4. Quality assurance and review
+
+## Results
+Task has been completed successfully with all requirements addressed.
+
+## Recommendations
+- Review the output for accuracy
+- Provide feedback for continuous improvement
+- Consider additional related tasks`
+    };
+
+    return outputs[analysis.taskType] || outputs.general;
   }
 
   /**
@@ -204,45 +429,6 @@ Provide clear, actionable results that can be used immediately. Include:
 `;
   }
 
-  /**
-   * Build claude-flow swarm command
-   */
-  private buildSwarmCommand(
-    workspace: string,
-    prompt: string,
-    analysis: TaskAnalysis
-  ): string {
-    const topology = analysis.complexity === 'complex' ? 'hierarchical' : 'star';
-    const maxAgents = analysis.requiredAgents.length;
-
-    // For MVP, we'll use a simpler approach - just echo the command
-    // In production, this would execute the actual swarm
-    return `echo "Simulating swarm execution..." && echo "${prompt}" > output.txt`;
-  }
-
-  /**
-   * Retrieve results from task execution
-   */
-  private async retrieveResults(workspace: string, taskId: string): Promise<any> {
-    try {
-      // Try to read output file
-      const outputPath = path.join(workspace, 'output.txt');
-      const output = await fs.readFile(outputPath, 'utf-8');
-
-      return {
-        taskId,
-        summary: 'Task simulation completed',
-        output: output,
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      return {
-        taskId,
-        summary: 'Task completed but no output file found',
-        note: 'This is a simulated execution for MVP demo'
-      };
-    }
-  }
 
   /**
    * Get task execution status
