@@ -249,9 +249,9 @@ export class AgentOrchestrator {
       const conversationManager = await getConversationManager();
       let conversation;
 
-      if (conversationId) {
+      if (execution.conversationId) {
         // Use existing conversation
-        conversation = conversationManager.getConversation(conversationId);
+        conversation = conversationManager.getConversation(execution.conversationId);
         if (conversation) {
           execution.logs.push(`📝 Continuing conversation: ${conversation.title}`);
           execution.logs.push(`   Previous messages: ${conversation.messages.length}`);
@@ -266,7 +266,7 @@ export class AgentOrchestrator {
       }
 
       // Add user message to conversation
-      await conversationManager.addMessage(conversation.id, 'user', taskDescription, { taskId });
+      await conversationManager.addMessage(conversation.id, 'user', taskDescription, { taskId: execution.taskId });
 
       execution.logs.push('🔄 Sending request to Claude API...');
 
@@ -342,7 +342,7 @@ export class AgentOrchestrator {
               'assistant',
               responseText,
               {
-                taskId,
+                taskId: execution.taskId,
                 attachments: [{
                   type: 'task_result',
                   name: `Task: ${taskDescription.substring(0, 50)}...`,
