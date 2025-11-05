@@ -258,7 +258,7 @@ export class AgentOrchestrator {
 
         const requestParams: any = {
           model: 'claude-sonnet-4-5-20250929',
-          max_tokens: 8096,
+          max_tokens: 16384, // Increased to allow longer responses without truncation
           messages
         };
 

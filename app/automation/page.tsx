@@ -388,10 +388,33 @@ export default function AutomationPage() {
                   {/* Main Output */}
                   {execution.result.output && (
                     <div className="bg-black/30 rounded-lg p-4">
-                      <h4 className="text-purple-200 font-semibold mb-2">📝 Final AI Response</h4>
-                      <pre className="text-purple-100 text-sm whitespace-pre-wrap leading-relaxed font-sans">
-                        {execution.result.output}
-                      </pre>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-purple-200 font-semibold">📝 Final AI Response</h4>
+                        <button
+                          onClick={() => {
+                            const blob = new Blob([execution.result.output], { type: 'text/plain' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `task-${execution.taskId}-response.txt`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="text-xs bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 px-3 py-1 rounded border border-purple-400/30"
+                        >
+                          📥 Download Full Text
+                        </button>
+                      </div>
+                      <div className="max-h-[600px] overflow-y-auto">
+                        <pre className="text-purple-100 text-sm whitespace-pre-wrap leading-relaxed font-sans">
+                          {execution.result.output}
+                        </pre>
+                      </div>
+                      {execution.result.output.length > 7000 && (
+                        <div className="mt-2 text-xs text-yellow-300 bg-yellow-500/20 p-2 rounded border border-yellow-400/30">
+                          ⚠️ Response may have been truncated due to token limit. Download full text to see complete content.
+                        </div>
+                      )}
                     </div>
                   )}
 
