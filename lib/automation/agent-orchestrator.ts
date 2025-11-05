@@ -341,10 +341,23 @@ export class AgentOrchestrator {
             if (!execution.result.toolCalls) {
               execution.result.toolCalls = [];
             }
+
+            // Parse MCP response if it's in content format
+            let parsedOutput = result;
+            if (result && result.content && Array.isArray(result.content) && result.content[0]?.type === 'text') {
+              try {
+                parsedOutput = JSON.parse(result.content[0].text);
+              } catch (e) {
+                // If parsing fails, use the raw result
+                parsedOutput = result;
+              }
+            }
+
             execution.result.toolCalls.push({
               tool: toolUse.name,
               input: toolUse.input,
-              output: result,
+              output: parsedOutput,
+              rawOutput: result,
               success: true
             });
           } catch (error: any) {
