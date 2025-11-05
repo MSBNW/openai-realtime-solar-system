@@ -118,9 +118,17 @@ export default function AutomationPage() {
       <div className="max-w-6xl mx-auto space-y-8">
         {/* Header */}
         <div className="text-center space-y-4">
-          <h1 className="text-5xl font-bold text-white">
-            AI Automation Platform
-          </h1>
+          <div className="flex items-center justify-center gap-4">
+            <h1 className="text-5xl font-bold text-white">
+              AI Automation Platform
+            </h1>
+            <Link
+              href="/automation/integrations"
+              className="px-4 py-2 rounded-lg bg-blue-500/20 text-blue-200 border border-blue-400/30 hover:bg-blue-500/30 text-sm"
+            >
+              🔌 MCP Integrations
+            </Link>
+          </div>
           <p className="text-xl text-purple-200">
             Powered by Claude-Flow Agent Swarms
           </p>

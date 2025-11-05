@@ -6,6 +6,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { TaskAnalysis } from './task-analyzer';
+import { getConnectionManager } from './mcp-connection-manager';
 import path from 'path';
 import fs from 'fs/promises';
 
@@ -176,7 +177,7 @@ export class AgentOrchestrator {
   }
 
   /**
-   * Execute task using Anthropic API
+   * Execute task using Anthropic API with MCP tool support
    */
   private async executeWithAnthropic(
     execution: TaskExecution,
@@ -189,38 +190,128 @@ export class AgentOrchestrator {
         apiKey: process.env.ANTHROPIC_API_KEY
       });
 
+      // Get available MCP tools
+      const connectionManager = getConnectionManager();
+      const mcpTools = connectionManager.getAllTools();
+
+      if (mcpTools.length > 0) {
+        execution.logs.push(`🔧 ${mcpTools.length} MCP tools available: ${mcpTools.map(t => t.name).join(', ')}`);
+      }
+
+      // Convert MCP tools to Claude API format
+      const tools = mcpTools.map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        input_schema: tool.inputSchema
+      }));
+
       execution.logs.push('🔄 Sending request to Claude API...');
 
-      const message = await anthropic.messages.create({
-        model: 'claude-sonnet-4-5-20250929',
-        max_tokens: 8096,
-        messages: [{
+      // Initial message
+      const messages: any[] = [{
+        role: 'user',
+        content: prompt
+      }];
+
+      let totalTokens = 0;
+      let conversationTurns = 0;
+      const maxTurns = 10; // Prevent infinite loops
+
+      // Agentic loop: keep going until Claude returns a final answer (no more tool uses)
+      while (conversationTurns < maxTurns) {
+        conversationTurns++;
+
+        const requestParams: any = {
+          model: 'claude-sonnet-4-5-20250929',
+          max_tokens: 8096,
+          messages
+        };
+
+        // Only add tools if we have MCP connections
+        if (tools.length > 0) {
+          requestParams.tools = tools;
+        }
+
+        const message = await anthropic.messages.create(requestParams);
+
+        totalTokens += message.usage.input_tokens + message.usage.output_tokens;
+
+        // Check if Claude wants to use tools
+        const toolUseBlocks = message.content.filter((block: any) => block.type === 'tool_use');
+
+        if (toolUseBlocks.length === 0) {
+          // No tool use - final answer
+          execution.logs.push('✨ Received final response from AI');
+
+          const responseText = message.content
+            .filter((block: any) => block.type === 'text')
+            .map((block: any) => block.text)
+            .join('\n');
+
+          execution.logs.push('📊 Processing results...');
+
+          execution.result = {
+            taskId: execution.taskId,
+            summary: `AI completed ${analysis.taskType} task with ${conversationTurns} turn(s)`,
+            output: responseText,
+            agents: analysis.requiredAgents.map(a => a.role),
+            complexity: analysis.complexity,
+            timestamp: new Date().toISOString(),
+            model: 'claude-sonnet-4-5-20250929',
+            tokensUsed: totalTokens,
+            toolsUsed: mcpTools.length > 0 ? mcpTools.map(t => t.name) : undefined,
+            conversationTurns
+          };
+
+          execution.logs.push(`💬 Total tokens used: ${totalTokens}`);
+          break;
+        }
+
+        // Claude wants to use tools
+        execution.logs.push(`🔧 AI requesting ${toolUseBlocks.length} tool(s)...`);
+
+        // Add assistant message to conversation
+        messages.push({
+          role: 'assistant',
+          content: message.content
+        });
+
+        // Execute each tool
+        const toolResults: any[] = [];
+        for (const toolUse of toolUseBlocks) {
+          execution.logs.push(`  → Calling ${toolUse.name}...`);
+
+          try {
+            const result = await connectionManager.callTool(toolUse.name, toolUse.input);
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: toolUse.id,
+              content: JSON.stringify(result)
+            });
+            execution.logs.push(`  ✓ ${toolUse.name} succeeded`);
+          } catch (error: any) {
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: toolUse.id,
+              content: `Error: ${error.message}`,
+              is_error: true
+            });
+            execution.logs.push(`  ✗ ${toolUse.name} failed: ${error.message}`);
+          }
+        }
+
+        // Add tool results to conversation
+        messages.push({
           role: 'user',
-          content: prompt
-        }]
-      });
+          content: toolResults
+        });
 
-      execution.logs.push('✨ Received response from AI');
+        execution.logs.push('🔄 Continuing conversation with tool results...');
+      }
 
-      const responseText = message.content
-        .filter((block: any) => block.type === 'text')
-        .map((block: any) => block.text)
-        .join('\n');
-
-      execution.logs.push('📊 Processing results...');
-
-      execution.result = {
-        taskId: execution.taskId,
-        summary: `AI completed ${analysis.taskType} task`,
-        output: responseText,
-        agents: analysis.requiredAgents.map(a => a.role),
-        complexity: analysis.complexity,
-        timestamp: new Date().toISOString(),
-        model: 'claude-sonnet-4-5-20250929',
-        tokensUsed: message.usage.input_tokens + message.usage.output_tokens
-      };
-
-      execution.logs.push(`💬 Tokens used: ${message.usage.input_tokens + message.usage.output_tokens}`);
+      if (conversationTurns >= maxTurns) {
+        execution.logs.push('⚠️  Max conversation turns reached');
+      }
 
     } catch (error: any) {
       execution.logs.push(`❌ AI execution failed: ${error.message}`);
