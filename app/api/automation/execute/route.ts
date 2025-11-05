@@ -9,7 +9,7 @@ import { getOrchestrator } from '@/lib/automation/agent-orchestrator';
 
 export async function POST(request: NextRequest) {
   try {
-    const { task } = await request.json();
+    const { task, conversationId } = await request.json();
 
     if (!task || typeof task !== 'string') {
       return NextResponse.json(
@@ -25,13 +25,14 @@ export async function POST(request: NextRequest) {
     // Generate task ID
     const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Start execution
+    // Start execution (with optional conversationId for continuity)
     const orchestrator = getOrchestrator();
-    const execution = await orchestrator.executeTask(taskId, task, analysis);
+    const execution = await orchestrator.executeTask(taskId, task, analysis, conversationId);
 
     return NextResponse.json({
       success: true,
       taskId,
+      conversationId: execution.conversationId, // Return conversationId for follow-up requests
       analysis,
       execution: {
         status: execution.status,

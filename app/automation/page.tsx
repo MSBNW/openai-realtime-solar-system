@@ -30,6 +30,7 @@ export default function AutomationPage() {
   } | null>(null);
   const [execution, setExecution] = useState<TaskExecution | null>(null);
   const [allTasks, setAllTasks] = useState<any[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
 
   const exampleTasks = [
     "Analyze the codebase and create a comprehensive README.md",
@@ -65,7 +66,7 @@ export default function AutomationPage() {
       const res = await fetch('/api/automation/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task })
+        body: JSON.stringify({ task, conversationId }) // Include conversationId for follow-ups
       });
 
       const data = await res.json();
@@ -76,6 +77,11 @@ export default function AutomationPage() {
           analysis: data.analysis
         });
         setExecution(data.execution);
+
+        // Save conversationId for follow-up requests
+        if (data.conversationId) {
+          setConversationId(data.conversationId);
+        }
 
         // Poll for status updates
         startPolling(data.taskId);
@@ -140,15 +146,39 @@ export default function AutomationPage() {
 
         {/* Task Input */}
         <div className="bg-white/10 backdrop-blur-lg rounded-lg p-6 border border-purple-300/20">
+          {/* Conversation Status */}
+          {conversationId && (
+            <div className="mb-4 p-3 bg-purple-500/20 rounded-lg border border-purple-400/30 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-purple-200">💬 Continuing conversation</span>
+                <code className="text-xs text-purple-300 bg-black/30 px-2 py-1 rounded">{conversationId}</code>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setConversationId(null);
+                  setTask('');
+                  setCurrentTask(null);
+                  setExecution(null);
+                }}
+                className="text-xs bg-purple-500/30 hover:bg-purple-500/40 text-purple-200 px-3 py-1 rounded border border-purple-400/30"
+              >
+                🔄 New Conversation
+              </button>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-white font-medium mb-2">
-                What do you need help with?
+                {conversationId ? 'Follow up or refine...' : 'What do you need help with?'}
               </label>
               <textarea
                 value={task}
                 onChange={(e) => setTask(e.target.value)}
-                placeholder="e.g., Analyze the codebase and create documentation..."
+                placeholder={conversationId
+                  ? "e.g., Now create the first blog post from that strategy..."
+                  : "e.g., Analyze the codebase and create documentation..."}
                 rows={4}
                 className="w-full px-4 py-3 rounded-lg bg-white/10 border border-purple-300/30 text-white placeholder-purple-200/50 focus:outline-none focus:border-purple-400"
                 disabled={loading}

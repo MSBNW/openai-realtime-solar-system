@@ -7,6 +7,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { TaskAnalysis } from './task-analyzer';
 import { getConnectionManager } from './mcp-connection-manager';
+import { getConversationManager } from './conversation-manager';
 import path from 'path';
 import fs from 'fs/promises';
 
@@ -29,6 +30,7 @@ export interface TaskExecution {
   result?: any;
   error?: string;
   logs: string[];
+  conversationId?: string;
 }
 
 export class AgentOrchestrator {
@@ -58,18 +60,20 @@ export class AgentOrchestrator {
   async executeTask(
     taskId: string,
     taskDescription: string,
-    analysis: TaskAnalysis
+    analysis: TaskAnalysis,
+    conversationId?: string
   ): Promise<TaskExecution> {
     const execution: TaskExecution = {
       taskId,
       status: 'queued',
-      logs: []
+      logs: [],
+      conversationId
     };
 
     this.executions.set(taskId, execution);
 
     // Start execution in background
-    this.runTask(taskId, taskDescription, analysis).catch(error => {
+    this.runTask(taskId, taskDescription, analysis, conversationId).catch(error => {
       execution.status = 'failed';
       execution.error = error.message;
       execution.endTime = new Date();
@@ -84,7 +88,8 @@ export class AgentOrchestrator {
   private async runTask(
     taskId: string,
     taskDescription: string,
-    analysis: TaskAnalysis
+    analysis: TaskAnalysis,
+    conversationId?: string
   ): Promise<void> {
     const execution = this.executions.get(taskId);
     if (!execution) return;
@@ -240,13 +245,39 @@ export class AgentOrchestrator {
         input_schema: tool.inputSchema
       }));
 
+      // Conversation integration
+      const conversationManager = await getConversationManager();
+      let conversation;
+
+      if (conversationId) {
+        // Use existing conversation
+        conversation = conversationManager.getConversation(conversationId);
+        if (conversation) {
+          execution.logs.push(`📝 Continuing conversation: ${conversation.title}`);
+          execution.logs.push(`   Previous messages: ${conversation.messages.length}`);
+        }
+      }
+
+      if (!conversation) {
+        // Create new conversation
+        conversation = await conversationManager.createConversation(taskDescription.substring(0, 50));
+        execution.conversationId = conversation.id;
+        execution.logs.push(`📝 Started new conversation: ${conversation.id}`);
+      }
+
+      // Add user message to conversation
+      await conversationManager.addMessage(conversation.id, 'user', taskDescription, { taskId });
+
       execution.logs.push('🔄 Sending request to Claude API...');
 
-      // Initial message
-      const messages: any[] = [{
-        role: 'user',
-        content: prompt
-      }];
+      // Build messages from conversation history + new prompt
+      const conversationHistory = conversationManager.getClaudeMessages(conversation.id, 10); // Last 10 messages
+      const messages: any[] = conversationHistory.length > 0
+        ? conversationHistory
+        : [{
+            role: 'user',
+            content: prompt
+          }];
 
       let totalTokens = 0;
       let conversationTurns = 0;
@@ -303,6 +334,25 @@ export class AgentOrchestrator {
           };
 
           execution.logs.push(`💬 Total tokens used: ${totalTokens}`);
+
+          // Save AI response to conversation
+          if (conversation) {
+            await conversationManager.addMessage(
+              conversation.id,
+              'assistant',
+              responseText,
+              {
+                taskId,
+                attachments: [{
+                  type: 'task_result',
+                  name: `Task: ${taskDescription.substring(0, 50)}...`,
+                  content: execution.result
+                }]
+              }
+            );
+            execution.logs.push(`💾 Saved response to conversation ${conversation.id}`);
+          }
+
           break;
         }
 
