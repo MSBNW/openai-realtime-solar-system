@@ -32,7 +32,8 @@ export async function GET(
         endTime: execution.endTime,
         result: execution.result,
         error: execution.error,
-        logs: execution.logs
+        logs: execution.logs,
+        conversationId: execution.conversationId
       }
     });
   } catch (error: any) {

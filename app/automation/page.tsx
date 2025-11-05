@@ -105,6 +105,11 @@ export default function AutomationPage() {
         if (data.success) {
           setExecution(data.execution);
 
+          // Preserve conversationId if present
+          if (data.execution.conversationId && !conversationId) {
+            setConversationId(data.execution.conversationId);
+          }
+
           if (data.execution.status === 'completed' || data.execution.status === 'failed') {
             clearInterval(pollInterval);
             loadTasks();
