@@ -3597,3 +3597,1453 @@ This specification provides a complete blueprint for implementing DreamCrew's **
 
 **Questions or feedback? Contact the architecture team.**
 
+
+---
+
+## ADDENDUM: LLM Agnosticism & Framework Integration
+
+### Critical Updates Based on Requirements
+
+This addendum addresses two key architectural requirements:
+1. **LLM Provider Agnosticism** - Support any LLM provider (not just Anthropic)
+2. **Framework Integration** - Leverage existing Mastra + CopilotKit infrastructure
+
+---
+
+## LLM Provider Abstraction Layer
+
+### Overview
+
+The system must support multiple LLM providers with zero code changes to core logic. This enables:
+- **Cost optimization** - Use cheapest provider for each task type
+- **Fallback resilience** - Auto-switch if provider is down
+- **Feature flexibility** - Use best provider for each capability
+- **Future-proofing** - Easy to add new providers
+
+### Supported Providers
+
+| Provider | Use Cases | Strengths |
+|----------|-----------|-----------|
+| **Anthropic Claude** | Complex reasoning, long context | Best reasoning, 200K context, thinking mode |
+| **OpenAI GPT-4** | General tasks, vision | Fast, reliable, good tool use |
+| **Google Gemini** | Multimodal, cost-sensitive | Cheap, good for simple tasks |
+| **AWS Bedrock** | Enterprise, compliance | On-prem, SOC2 compliance |
+| **Azure OpenAI** | Enterprise Microsoft shops | Corporate approval, data residency |
+| **Local Models (Ollama)** | Privacy, offline | No API costs, full control |
+| **Groq** | Speed-critical tasks | Ultra-fast inference |
+
+---
+
+### 1. LLM Provider Interface
+
+**Location:** `packages/dreamcrew-orchestrator/src/providers/LLMProvider.ts`
+
+```typescript
+// packages/dreamcrew-orchestrator/src/providers/LLMProvider.ts
+
+export interface LLMMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string | MessageContent[];
+}
+
+export interface MessageContent {
+  type: 'text' | 'image' | 'tool_use' | 'tool_result';
+  text?: string;
+  image_url?: string;
+  tool_use?: ToolUse;
+  tool_result?: ToolResult;
+}
+
+export interface ToolUse {
+  id: string;
+  name: string;
+  input: Record<string, any>;
+}
+
+export interface ToolResult {
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean;
+}
+
+export interface LLMTool {
+  name: string;
+  description: string;
+  input_schema: Record<string, any>;
+}
+
+export interface LLMRequest {
+  messages: LLMMessage[];
+  tools?: LLMTool[];
+  max_tokens?: number;
+  temperature?: number;
+  system?: string;
+  thinking?: {
+    enabled: boolean;
+    budget_tokens?: number;
+  };
+}
+
+export interface LLMResponse {
+  content: MessageContent[];
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+  };
+  stop_reason: 'end_turn' | 'max_tokens' | 'tool_use';
+}
+
+export interface LLMProviderConfig {
+  provider: 'anthropic' | 'openai' | 'gemini' | 'bedrock' | 'azure' | 'ollama' | 'groq';
+  apiKey?: string;
+  model: string;
+  baseUrl?: string; // For custom endpoints
+  timeout?: number;
+  maxRetries?: number;
+}
+
+/**
+ * Universal LLM Provider Interface
+ * All providers must implement this interface
+ */
+export interface LLMProvider {
+  /**
+   * Generate completion with optional tool use
+   */
+  complete(request: LLMRequest): Promise<LLMResponse>;
+
+  /**
+   * Stream completion (for UI)
+   */
+  stream(request: LLMRequest): AsyncIterator<LLMResponse>;
+
+  /**
+   * Check if provider supports a capability
+   */
+  supports(capability: 'tools' | 'vision' | 'thinking' | 'streaming'): boolean;
+
+  /**
+   * Get provider-specific pricing (credits per 1K tokens)
+   */
+  getPricing(): {
+    inputCostPer1K: number;
+    outputCostPer1K: number;
+  };
+
+  /**
+   * Provider name and model
+   */
+  getInfo(): {
+    provider: string;
+    model: string;
+  };
+}
+```
+
+---
+
+### 2. Provider Implementations
+
+#### Anthropic Provider
+
+```typescript
+// packages/dreamcrew-orchestrator/src/providers/AnthropicProvider.ts
+
+import Anthropic from '@anthropic-ai/sdk';
+import { LLMProvider, LLMRequest, LLMResponse } from './LLMProvider';
+
+export class AnthropicProvider implements LLMProvider {
+  private client: Anthropic;
+  private model: string;
+
+  constructor(config: { apiKey: string; model?: string }) {
+    this.client = new Anthropic({ apiKey: config.apiKey });
+    this.model = config.model || 'claude-sonnet-4-5-20250929';
+  }
+
+  async complete(request: LLMRequest): Promise<LLMResponse> {
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: request.max_tokens || 8096,
+      messages: this.convertMessages(request.messages),
+      tools: request.tools,
+      system: request.system,
+      thinking: request.thinking,
+    });
+
+    return this.convertResponse(response);
+  }
+
+  async *stream(request: LLMRequest): AsyncIterator<LLMResponse> {
+    const stream = await this.client.messages.stream({
+      model: this.model,
+      max_tokens: request.max_tokens || 8096,
+      messages: this.convertMessages(request.messages),
+      tools: request.tools,
+    });
+
+    for await (const event of stream) {
+      if (event.type === 'content_block_delta') {
+        yield this.convertStreamEvent(event);
+      }
+    }
+  }
+
+  supports(capability: string): boolean {
+    const capabilities = {
+      tools: true,
+      vision: true,
+      thinking: this.model.includes('sonnet') || this.model.includes('opus'),
+      streaming: true,
+    };
+    return capabilities[capability] || false;
+  }
+
+  getPricing() {
+    // Claude Sonnet 4.5 pricing (as of Nov 2025)
+    return {
+      inputCostPer1K: 0.003,
+      outputCostPer1K: 0.015,
+    };
+  }
+
+  getInfo() {
+    return {
+      provider: 'anthropic',
+      model: this.model,
+    };
+  }
+
+  private convertMessages(messages: any[]): any[] {
+    // Convert universal format to Anthropic format
+    return messages;
+  }
+
+  private convertResponse(response: any): LLMResponse {
+    // Convert Anthropic response to universal format
+    return {
+      content: response.content,
+      usage: response.usage,
+      stop_reason: response.stop_reason,
+    };
+  }
+
+  private convertStreamEvent(event: any): LLMResponse {
+    // Convert stream event to universal format
+    return {
+      content: [{ type: 'text', text: event.delta.text }],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      stop_reason: 'end_turn',
+    };
+  }
+}
+```
+
+#### OpenAI Provider
+
+```typescript
+// packages/dreamcrew-orchestrator/src/providers/OpenAIProvider.ts
+
+import OpenAI from 'openai';
+import { LLMProvider, LLMRequest, LLMResponse } from './LLMProvider';
+
+export class OpenAIProvider implements LLMProvider {
+  private client: OpenAI;
+  private model: string;
+
+  constructor(config: { apiKey: string; model?: string }) {
+    this.client = new OpenAI({ apiKey: config.apiKey });
+    this.model = config.model || 'gpt-4-turbo-preview';
+  }
+
+  async complete(request: LLMRequest): Promise<LLMResponse> {
+    const response = await this.client.chat.completions.create({
+      model: this.model,
+      messages: this.convertMessages(request.messages, request.system),
+      tools: this.convertTools(request.tools),
+      max_tokens: request.max_tokens,
+      temperature: request.temperature,
+    });
+
+    return this.convertResponse(response);
+  }
+
+  async *stream(request: LLMRequest): AsyncIterator<LLMResponse> {
+    const stream = await this.client.chat.completions.create({
+      model: this.model,
+      messages: this.convertMessages(request.messages, request.system),
+      tools: this.convertTools(request.tools),
+      stream: true,
+    });
+
+    for await (const chunk of stream) {
+      yield this.convertStreamChunk(chunk);
+    }
+  }
+
+  supports(capability: string): boolean {
+    return {
+      tools: true,
+      vision: this.model.includes('vision') || this.model.includes('gpt-4'),
+      thinking: false, // OpenAI doesn't have extended thinking mode
+      streaming: true,
+    }[capability] || false;
+  }
+
+  getPricing() {
+    // GPT-4 Turbo pricing
+    return {
+      inputCostPer1K: 0.01,
+      outputCostPer1K: 0.03,
+    };
+  }
+
+  getInfo() {
+    return {
+      provider: 'openai',
+      model: this.model,
+    };
+  }
+
+  private convertMessages(messages: any[], system?: string): any[] {
+    const converted = messages.map(m => ({
+      role: m.role,
+      content: typeof m.content === 'string' ? m.content : this.convertContent(m.content),
+    }));
+
+    // OpenAI uses system message in messages array
+    if (system) {
+      converted.unshift({ role: 'system', content: system });
+    }
+
+    return converted;
+  }
+
+  private convertTools(tools?: any[]): any[] | undefined {
+    if (!tools) return undefined;
+
+    return tools.map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.input_schema,
+      },
+    }));
+  }
+
+  private convertResponse(response: any): LLMResponse {
+    const message = response.choices[0].message;
+    
+    const content: any[] = [];
+    
+    if (message.content) {
+      content.push({ type: 'text', text: message.content });
+    }
+
+    if (message.tool_calls) {
+      for (const toolCall of message.tool_calls) {
+        content.push({
+          type: 'tool_use',
+          tool_use: {
+            id: toolCall.id,
+            name: toolCall.function.name,
+            input: JSON.parse(toolCall.function.arguments),
+          },
+        });
+      }
+    }
+
+    return {
+      content,
+      usage: {
+        input_tokens: response.usage.prompt_tokens,
+        output_tokens: response.usage.completion_tokens,
+      },
+      stop_reason: message.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn',
+    };
+  }
+
+  private convertContent(content: any[]): any {
+    // Convert universal content format to OpenAI format
+    return content;
+  }
+
+  private convertStreamChunk(chunk: any): LLMResponse {
+    // Convert OpenAI stream chunk to universal format
+    const delta = chunk.choices[0]?.delta;
+    return {
+      content: delta?.content ? [{ type: 'text', text: delta.content }] : [],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      stop_reason: 'end_turn',
+    };
+  }
+}
+```
+
+#### Google Gemini Provider
+
+```typescript
+// packages/dreamcrew-orchestrator/src/providers/GeminiProvider.ts
+
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { LLMProvider, LLMRequest, LLMResponse } from './LLMProvider';
+
+export class GeminiProvider implements LLMProvider {
+  private client: any;
+  private model: string;
+
+  constructor(config: { apiKey: string; model?: string }) {
+    this.client = new GoogleGenerativeAI(config.apiKey);
+    this.model = config.model || 'gemini-pro';
+  }
+
+  async complete(request: LLMRequest): Promise<LLMResponse> {
+    const model = this.client.getGenerativeModel({ model: this.model });
+
+    const chat = model.startChat({
+      history: this.convertMessages(request.messages),
+    });
+
+    const result = await chat.sendMessage(
+      request.messages[request.messages.length - 1].content
+    );
+
+    return this.convertResponse(result);
+  }
+
+  async *stream(request: LLMRequest): AsyncIterator<LLMResponse> {
+    const model = this.client.getGenerativeModel({ model: this.model });
+    const result = await model.generateContentStream(
+      request.messages[request.messages.length - 1].content
+    );
+
+    for await (const chunk of result.stream) {
+      yield this.convertStreamChunk(chunk);
+    }
+  }
+
+  supports(capability: string): boolean {
+    return {
+      tools: this.model === 'gemini-pro', // Only Pro supports tools
+      vision: this.model.includes('vision') || this.model.includes('pro'),
+      thinking: false,
+      streaming: true,
+    }[capability] || false;
+  }
+
+  getPricing() {
+    // Gemini Pro pricing (very cheap!)
+    return {
+      inputCostPer1K: 0.00025,
+      outputCostPer1K: 0.0005,
+    };
+  }
+
+  getInfo() {
+    return {
+      provider: 'gemini',
+      model: this.model,
+    };
+  }
+
+  private convertMessages(messages: any[]): any[] {
+    // Convert to Gemini format
+    return messages.map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
+  }
+
+  private convertResponse(response: any): LLMResponse {
+    return {
+      content: [{ type: 'text', text: response.response.text() }],
+      usage: {
+        input_tokens: response.response.usageMetadata?.promptTokenCount || 0,
+        output_tokens: response.response.usageMetadata?.candidatesTokenCount || 0,
+      },
+      stop_reason: 'end_turn',
+    };
+  }
+
+  private convertStreamChunk(chunk: any): LLMResponse {
+    return {
+      content: [{ type: 'text', text: chunk.text() }],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      stop_reason: 'end_turn',
+    };
+  }
+}
+```
+
+---
+
+### 3. Provider Factory & Selection
+
+```typescript
+// packages/dreamcrew-orchestrator/src/providers/LLMProviderFactory.ts
+
+import { LLMProvider, LLMProviderConfig } from './LLMProvider';
+import { AnthropicProvider } from './AnthropicProvider';
+import { OpenAIProvider } from './OpenAIProvider';
+import { GeminiProvider } from './GeminiProvider';
+
+export class LLMProviderFactory {
+  /**
+   * Create provider instance based on config
+   */
+  static create(config: LLMProviderConfig): LLMProvider {
+    switch (config.provider) {
+      case 'anthropic':
+        return new AnthropicProvider({
+          apiKey: config.apiKey!,
+          model: config.model,
+        });
+
+      case 'openai':
+        return new OpenAIProvider({
+          apiKey: config.apiKey!,
+          model: config.model,
+        });
+
+      case 'gemini':
+        return new GeminiProvider({
+          apiKey: config.apiKey!,
+          model: config.model,
+        });
+
+      // Add more providers as needed
+
+      default:
+        throw new Error(`Unsupported LLM provider: ${config.provider}`);
+    }
+  }
+}
+
+/**
+ * Provider Selection Strategy
+ * Automatically choose best provider for each task type
+ */
+export class LLMProviderSelector {
+  private providers: Map<string, LLMProvider> = new Map();
+
+  constructor(configs: LLMProviderConfig[]) {
+    for (const config of configs) {
+      const provider = LLMProviderFactory.create(config);
+      this.providers.set(config.provider, provider);
+    }
+  }
+
+  /**
+   * Select best provider for task based on requirements
+   */
+  selectProvider(requirements: {
+    taskType: 'reasoning' | 'simple' | 'vision' | 'speed-critical';
+    needsTools?: boolean;
+    needsThinking?: boolean;
+    budget?: 'low' | 'medium' | 'high';
+  }): LLMProvider {
+    
+    // Strategy matrix
+    const strategies = {
+      'reasoning': ['anthropic', 'openai', 'gemini'],
+      'simple': ['gemini', 'openai', 'anthropic'], // Cheapest first
+      'vision': ['anthropic', 'openai', 'gemini'],
+      'speed-critical': ['groq', 'gemini', 'openai'],
+    };
+
+    const preferredProviders = strategies[requirements.taskType] || ['anthropic'];
+
+    // Filter by capabilities
+    for (const providerName of preferredProviders) {
+      const provider = this.providers.get(providerName);
+      if (!provider) continue;
+
+      if (requirements.needsTools && !provider.supports('tools')) continue;
+      if (requirements.needsThinking && !provider.supports('thinking')) continue;
+
+      // Check budget
+      if (requirements.budget === 'low') {
+        const pricing = provider.getPricing();
+        if (pricing.inputCostPer1K > 0.001) continue; // Too expensive
+      }
+
+      return provider;
+    }
+
+    // Fallback to first available
+    return this.providers.values().next().value;
+  }
+
+  /**
+   * Get all available providers
+   */
+  getAllProviders(): LLMProvider[] {
+    return Array.from(this.providers.values());
+  }
+}
+```
+
+---
+
+### 4. Updated AgentReasoningEngine (LLM-Agnostic)
+
+```typescript
+// packages/dreamcrew-orchestrator/src/AgentReasoningEngine.ts (UPDATED)
+
+import { MCPServerRegistry } from './MCPServerRegistry';
+import { LLMProvider, LLMRequest } from './providers/LLMProvider';
+import { LLMProviderSelector } from './providers/LLMProviderFactory';
+
+export interface ReasoningConfig {
+  providers: LLMProviderSelector; // Changed from single Anthropic client
+  mcpRegistry: MCPServerRegistry;
+}
+
+export class AgentReasoningEngine {
+  private providers: LLMProviderSelector;
+  private mcpRegistry: MCPServerRegistry;
+
+  constructor(config: ReasoningConfig) {
+    this.providers = config.providers;
+    this.mcpRegistry = config.mcpRegistry;
+  }
+
+  async executeWithReasoning(
+    prompt: string,
+    availableTools: any[],
+    options: {
+      agentId: string;
+      executionId: string;
+      taskId: string;
+      taskType?: 'reasoning' | 'simple' | 'vision';
+      maxIterations?: number;
+      enableThinking?: boolean;
+    }
+  ): Promise<any> {
+    
+    // SELECT BEST PROVIDER FOR THIS TASK
+    const provider = this.providers.selectProvider({
+      taskType: options.taskType || 'reasoning',
+      needsTools: availableTools.length > 0,
+      needsThinking: options.enableThinking,
+      budget: 'medium',
+    });
+
+    console.log(`Using ${provider.getInfo().provider} for task ${options.taskId}`);
+
+    const maxIterations = options.maxIterations || 10;
+    const conversationHistory: any[] = [];
+    const toolInvocations: any[] = [];
+
+    // Initial prompt
+    conversationHistory.push({
+      role: 'user',
+      content: prompt,
+    });
+
+    let iterations = 0;
+    let taskComplete = false;
+
+    while (iterations < maxIterations && !taskComplete) {
+      iterations++;
+
+      // Call LLM via provider interface (works with any provider!)
+      const request: LLMRequest = {
+        messages: conversationHistory,
+        tools: this.convertToProviderTools(availableTools),
+        max_tokens: 8096,
+        thinking: options.enableThinking ? { enabled: true, budget_tokens: 2000 } : undefined,
+      };
+
+      const response = await provider.complete(request);
+
+      // Add response to history
+      conversationHistory.push({
+        role: 'assistant',
+        content: response.content,
+      });
+
+      // Check for tool uses
+      const toolUses = response.content.filter((block: any) => block.type === 'tool_use');
+
+      if (toolUses.length === 0) {
+        // Task complete
+        taskComplete = true;
+
+        const textBlocks = response.content.filter((block: any) => block.type === 'text');
+        const output = textBlocks.map((b: any) => b.text).join('\n');
+
+        const thinkingBlocks = response.content.filter((block: any) => block.type === 'thinking');
+        const reasoning = thinkingBlocks.map((b: any) => b.thinking).join('\n');
+
+        return {
+          output,
+          reasoning,
+          toolInvocations,
+          iterations,
+          success: true,
+          provider: provider.getInfo(),
+        };
+      }
+
+      // Execute tools
+      const toolResults: any[] = [];
+
+      for (const toolUse of toolUses) {
+        const startTime = Date.now();
+
+        try {
+          const result = await this.mcpRegistry.executeTool(
+            toolUse.tool_use.name,
+            toolUse.tool_use.input
+          );
+
+          const duration = Date.now() - startTime;
+
+          // Calculate credits based on provider pricing
+          const pricing = provider.getPricing();
+          const estimatedTokens = JSON.stringify(result).length / 4;
+          const credits = (estimatedTokens / 1000) * pricing.outputCostPer1K * 1000; // Convert to credits
+
+          toolInvocations.push({
+            toolName: toolUse.tool_use.name,
+            input: toolUse.tool_use.input,
+            output: result,
+            duration,
+            creditsUsed: credits,
+          });
+
+          toolResults.push({
+            type: 'tool_result',
+            tool_result: {
+              tool_use_id: toolUse.tool_use.id,
+              content: JSON.stringify(result, null, 2),
+            },
+          });
+
+        } catch (error) {
+          toolResults.push({
+            type: 'tool_result',
+            tool_result: {
+              tool_use_id: toolUse.tool_use.id,
+              content: `Error: ${error.message}`,
+              is_error: true,
+            },
+          });
+        }
+      }
+
+      // Add tool results to conversation
+      conversationHistory.push({
+        role: 'user',
+        content: toolResults,
+      });
+    }
+
+    return {
+      output: 'Task incomplete: Maximum iterations reached',
+      reasoning: 'Agent hit iteration limit',
+      toolInvocations,
+      iterations,
+      success: false,
+      provider: provider.getInfo(),
+    };
+  }
+
+  async think(prompt: string, taskType?: 'reasoning' | 'simple'): Promise<string> {
+    const provider = this.providers.selectProvider({
+      taskType: taskType || 'reasoning',
+      needsThinking: true,
+      budget: 'medium',
+    });
+
+    const response = await provider.complete({
+      messages: [{ role: 'user', content: prompt }],
+      thinking: { enabled: true, budget_tokens: 2000 },
+    });
+
+    const textBlocks = response.content.filter((block: any) => block.type === 'text');
+    return textBlocks.map((b: any) => b.text).join('\n');
+  }
+
+  private convertToProviderTools(mcpTools: any[]): any[] {
+    // Universal tool format (works with all providers)
+    return mcpTools.map(tool => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.inputSchema,
+    }));
+  }
+}
+```
+
+---
+
+### 5. Configuration Example
+
+```typescript
+// Example: Configure multiple providers
+import { LLMProviderSelector } from './providers/LLMProviderFactory';
+import { SwarmOrchestrator } from './SwarmOrchestrator';
+
+const providerSelector = new LLMProviderSelector([
+  {
+    provider: 'anthropic',
+    apiKey: process.env.ANTHROPIC_API_KEY!,
+    model: 'claude-sonnet-4-5-20250929',
+  },
+  {
+    provider: 'openai',
+    apiKey: process.env.OPENAI_API_KEY!,
+    model: 'gpt-4-turbo-preview',
+  },
+  {
+    provider: 'gemini',
+    apiKey: process.env.GOOGLE_API_KEY!,
+    model: 'gemini-pro',
+  },
+]);
+
+// Orchestrator automatically uses best provider for each task
+const orchestrator = new SwarmOrchestrator({
+  tenantId: 'tenant-uuid',
+  providers: providerSelector, // Pass selector instead of single client
+  maxConcurrentAgents: 10,
+  enableHumanCollaboration: true,
+});
+
+// Execute swarm - providers selected automatically per task!
+const result = await orchestrator.executeGoal(
+  'Research competitor pricing and create marketing strategy',
+  context
+);
+
+// Result shows which provider was used for each task
+console.log(result.tasks.map(t => ({
+  task: t.taskName,
+  provider: t.provider, // 'anthropic', 'openai', 'gemini', etc.
+  cost: t.creditsUsed
+})));
+```
+
+
+---
+
+## Integration with Mastra Framework
+
+### Overview
+
+Mastra (mastra.ai) is an open-source AI agent orchestration framework you're already using. Instead of replacing Mastra, **DreamCrew's swarm system builds ON TOP of it** as an enhanced orchestration layer.
+
+**Architecture:**
+```
+┌────────────────────────────────────────────────────┐
+│     DreamCrew Swarm Orchestration Layer            │
+│  (Multi-agent, Auto-config, Reasoning Engine)      │
+└────────────────────────────────────────────────────┘
+                     ↓
+┌────────────────────────────────────────────────────┐
+│          Mastra Agent Framework                     │
+│  (Agent definitions, Workflows, Tool registry)      │
+└────────────────────────────────────────────────────┘
+                     ↓
+┌────────────────────────────────────────────────────┐
+│        LLM Provider Layer (Anthropic/OpenAI/etc)   │
+└────────────────────────────────────────────────────┘
+```
+
+### What Mastra Provides
+
+- **Agent Definitions** - Structured agent configuration
+- **Workflow Engine** - Sequential and parallel workflows
+- **Tool Registry** - Centralized tool management
+- **Memory System** - Agent memory and context
+- **Logging & Observability** - Built-in monitoring
+
+### What DreamCrew Adds
+
+- **Autonomous Task Decomposition** - AI breaks down goals into tasks
+- **Dynamic Agent Spawning** - Create agents on-demand for specific tasks
+- **Multi-Agent Swarms** - Coordinate multiple agents in parallel
+- **Auto-Configuration** - Zero-config tenant onboarding
+- **Hierarchical MCP Servers** - House/Tenant/User level tools
+- **Human-in-the-Loop** - Conversational collaboration
+
+---
+
+### Integration Pattern: Mastra as Agent Executor
+
+```typescript
+// packages/dreamcrew-orchestrator/src/MastraAgentExecutor.ts
+
+import { Mastra } from '@mastra/core';
+import { Agent } from '@mastra/core/agent';
+import { LLMProvider } from './providers/LLMProvider';
+
+/**
+ * Wrapper that uses Mastra agents to execute swarm tasks
+ */
+export class MastraAgentExecutor {
+  private mastra: Mastra;
+
+  constructor(config: { llmProvider: LLMProvider }) {
+    this.mastra = new Mastra({
+      // Configure Mastra to use our LLM provider
+      llm: this.wrapLLMProvider(config.llmProvider),
+    });
+  }
+
+  /**
+   * Create a Mastra agent for a specific task
+   */
+  async createAgent(task: {
+    name: string;
+    type: string;
+    instructions: string;
+    tools: any[];
+  }): Promise<Agent> {
+    
+    return this.mastra.createAgent({
+      name: task.name,
+      instructions: task.instructions,
+      model: 'auto', // Uses wrapped LLM provider
+      tools: task.tools,
+      memory: {
+        enabled: true,
+        maxMessages: 50,
+      },
+    });
+  }
+
+  /**
+   * Execute task using Mastra agent
+   */
+  async executeTask(
+    agent: Agent,
+    task: {
+      goal: string;
+      context: Record<string, any>;
+    }
+  ): Promise<any> {
+    
+    const result = await agent.run({
+      prompt: task.goal,
+      context: task.context,
+    });
+
+    return {
+      output: result.text,
+      toolCalls: result.toolCalls,
+      tokensUsed: result.usage,
+    };
+  }
+
+  /**
+   * Create Mastra workflow from task graph
+   */
+  async createWorkflow(tasks: Task[]): Promise<any> {
+    const workflow = this.mastra.createWorkflow({
+      name: 'swarm-execution',
+      nodes: tasks.map(task => ({
+        id: task.id,
+        type: 'agent',
+        agent: task.id,
+        inputs: task.dependencies.map(depId => ({
+          from: depId,
+          key: 'output',
+        })),
+      })),
+    });
+
+    return workflow;
+  }
+
+  /**
+   * Wrap our LLM provider to work with Mastra
+   */
+  private wrapLLMProvider(provider: LLMProvider): any {
+    return {
+      complete: async (request: any) => {
+        const response = await provider.complete({
+          messages: request.messages,
+          tools: request.tools,
+          max_tokens: request.max_tokens,
+        });
+
+        return {
+          text: response.content.find((c: any) => c.type === 'text')?.text || '',
+          toolCalls: response.content
+            .filter((c: any) => c.type === 'tool_use')
+            .map((c: any) => c.tool_use),
+          usage: response.usage,
+        };
+      },
+    };
+  }
+}
+```
+
+---
+
+### Updated SwarmOrchestrator with Mastra
+
+```typescript
+// packages/dreamcrew-orchestrator/src/SwarmOrchestrator.ts (MASTRA-INTEGRATED)
+
+import { MastraAgentExecutor } from './MastraAgentExecutor';
+import { LLMProviderSelector } from './providers/LLMProviderFactory';
+
+export class SwarmOrchestrator {
+  private providers: LLMProviderSelector;
+  private mastraExecutor: MastraAgentExecutor;
+  // ... other properties
+
+  constructor(config: SwarmConfig) {
+    this.providers = config.providers;
+
+    // Initialize Mastra executor with primary provider
+    const primaryProvider = this.providers.selectProvider({
+      taskType: 'reasoning',
+      budget: 'medium',
+    });
+
+    this.mastraExecutor = new MastraAgentExecutor({
+      llmProvider: primaryProvider,
+    });
+
+    // ... rest of initialization
+  }
+
+  /**
+   * Execute a single task using Mastra agent
+   */
+  private async executeTask(
+    executionId: string,
+    task: Task,
+    availableTools: MCPTool[],
+    previousResults: TaskResult[],
+    context: ExecutionContext
+  ): Promise<TaskResult> {
+    
+    const startTime = Date.now();
+
+    // Select best provider for this task type
+    const provider = this.providers.selectProvider({
+      taskType: this.mapTaskTypeToProviderType(task.type),
+      needsTools: availableTools.length > 0,
+      budget: 'medium',
+    });
+
+    // Create Mastra agent for this task
+    const agent = await this.mastraExecutor.createAgent({
+      name: `${task.name}-agent`,
+      type: task.type,
+      instructions: this.generateAgentPrompt(task, context, availableTools),
+      tools: availableTools,
+    });
+
+    try {
+      // Build task context from previous results
+      const taskContext = this.buildTaskContext(task, previousResults, context);
+
+      // Execute using Mastra
+      const result = await this.mastraExecutor.executeTask(agent, {
+        goal: task.goal,
+        context: taskContext,
+      });
+
+      const duration = Date.now() - startTime;
+
+      // Store result
+      await this.storeTaskResult(executionId, task.id, result, duration);
+
+      return {
+        taskId: task.id,
+        taskName: task.name,
+        success: true,
+        output: result.output,
+        reasoning: result.reasoning,
+        toolInvocations: result.toolCalls,
+        duration,
+        provider: provider.getInfo(),
+      };
+
+    } catch (error) {
+      const duration = Date.now() - startTime;
+
+      return {
+        taskId: task.id,
+        taskName: task.name,
+        success: false,
+        error: error.message,
+        duration,
+        provider: provider.getInfo(),
+      };
+    }
+  }
+
+  private mapTaskTypeToProviderType(taskType: string): 'reasoning' | 'simple' | 'vision' {
+    const mapping: Record<string, 'reasoning' | 'simple' | 'vision'> = {
+      research: 'reasoning',
+      analysis: 'reasoning',
+      execution: 'simple',
+      communication: 'simple',
+    };
+    return mapping[taskType] || 'reasoning';
+  }
+}
+```
+
+---
+
+## Integration with CopilotKit
+
+### Overview
+
+CopilotKit provides React components for building AI-powered UIs. We'll use it for:
+- **Rep Room Chat Interface** - Conversational UI with streaming responses
+- **Swarm Progress Display** - Real-time task execution visualization
+- **HITL Approval Flows** - Human-in-the-loop interactions
+- **Knowledge Base Search** - Semantic search UI
+
+### Installation
+
+```bash
+npm install @copilotkit/react-core @copilotkit/react-ui @copilotkit/react-textarea
+```
+
+---
+
+### 1. Rep Room Chat Component
+
+```typescript
+// components/RepRoomChat.tsx
+
+import { CopilotKit } from '@copilotkit/react-core';
+import { CopilotChat } from '@copilotkit/react-ui';
+import '@copilotkit/react-ui/styles.css';
+
+export function RepRoomChat({ tenantId, agentId }: { tenantId: string; agentId: string }) {
+  return (
+    <CopilotKit
+      runtimeUrl="/api/copilotkit"
+      agent={agentId}
+      // CopilotKit will handle streaming, tool calls, etc.
+    >
+      <CopilotChat
+        labels={{
+          title: "Chat with your AI Assistant",
+          initial: "Hi! How can I help you today?",
+        }}
+        onSubmitMessage={async (message) => {
+          // Trigger swarm execution if needed
+          const response = await fetch('/api/swarm/execute', {
+            method: 'POST',
+            body: JSON.stringify({
+              tenantId,
+              goal: message,
+              enableHumanCollaboration: true,
+            }),
+          });
+
+          return response.json();
+        }}
+      />
+    </CopilotKit>
+  );
+}
+```
+
+---
+
+### 2. Swarm Progress Component
+
+```typescript
+// components/SwarmProgress.tsx
+
+import { useCopilotAction, useCopilotReadable } from '@copilotkit/react-core';
+import { useEffect, useState } from 'react';
+
+export function SwarmProgress({ executionId }: { executionId: string }) {
+  const [status, setStatus] = useState<any>(null);
+
+  // Make swarm status readable by CopilotKit
+  useCopilotReadable({
+    description: "Current swarm execution status",
+    value: status,
+  });
+
+  // Define action for human approval
+  useCopilotAction({
+    name: "approve_swarm_step",
+    description: "Approve the next step in swarm execution",
+    parameters: [
+      {
+        name: "approved",
+        type: "boolean",
+        description: "Whether to approve the step",
+      },
+    ],
+    handler: async ({ approved }) => {
+      await fetch(`/api/swarm/${executionId}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ approved }),
+      });
+    },
+  });
+
+  // Poll for status updates
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const response = await fetch(`/api/swarm/${executionId}/status`);
+      const data = await response.json();
+      setStatus(data);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [executionId]);
+
+  if (!status) return <div>Loading...</div>;
+
+  return (
+    <div className="swarm-progress">
+      <h2>Swarm Execution: {status.goal}</h2>
+      
+      <div className="progress-bar">
+        <div 
+          className="progress-fill" 
+          style={{ width: `${status.progress.percentComplete}%` }}
+        />
+      </div>
+
+      <p>
+        Wave {status.progress.currentWave} of {status.progress.totalWaves} | 
+        {status.progress.completedTasks}/{status.progress.totalTasks} tasks complete
+      </p>
+
+      <div className="task-list">
+        {status.tasks.map((task: any) => (
+          <div key={task.taskId} className={`task task-${task.status}`}>
+            <span className="task-icon">{getStatusIcon(task.status)}</span>
+            <span className="task-name">{task.name}</span>
+            {task.status === 'executing' && (
+              <span className="task-spinner">⏳</span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {status.humanInteractions?.length > 0 && (
+        <div className="hitl-prompt">
+          <h3>Approval Needed</h3>
+          <p>{status.humanInteractions[0].message}</p>
+          <button onClick={() => handleApproval(true)}>Approve</button>
+          <button onClick={() => handleApproval(false)}>Reject</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getStatusIcon(status: string) {
+  const icons: Record<string, string> = {
+    pending: '⏸️',
+    executing: '🔵',
+    completed: '✅',
+    failed: '❌',
+  };
+  return icons[status] || '⚪';
+}
+```
+
+---
+
+### 3. CopilotKit API Route
+
+```typescript
+// app/api/copilotkit/route.ts
+
+import { CopilotRuntime, OpenAIAdapter } from '@copilotkit/runtime';
+import { LLMProviderFactory } from '@/packages/dreamcrew-orchestrator/src/providers/LLMProviderFactory';
+
+export async function POST(req: Request) {
+  const { messages, agentId } = await req.json();
+
+  // Get tenant's preferred LLM provider
+  const provider = LLMProviderFactory.create({
+    provider: 'anthropic', // or from tenant settings
+    apiKey: process.env.ANTHROPIC_API_KEY!,
+    model: 'claude-sonnet-4-5-20250929',
+  });
+
+  // Wrap our provider for CopilotKit
+  const adapter = {
+    stream: async function* (request: any) {
+      const response = await provider.stream({
+        messages: request.messages,
+        tools: request.tools,
+      });
+
+      for await (const chunk of response) {
+        yield {
+          choices: [{
+            delta: {
+              content: chunk.content[0]?.text || '',
+            },
+          }],
+        };
+      }
+    },
+  };
+
+  const runtime = new CopilotRuntime({
+    adapter,
+  });
+
+  return runtime.response(req);
+}
+```
+
+---
+
+### 4. Unified Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     USER INTERFACE LAYER                     │
+│                                                               │
+│  ┌─────────────────┐  ┌──────────────────┐                 │
+│  │  CopilotKit UI  │  │  Custom React    │                 │
+│  │  (Chat, HITL)   │  │  Components      │                 │
+│  └─────────────────┘  └──────────────────┘                 │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│              DREAMCREW SWARM ORCHESTRATION                   │
+│                                                               │
+│  ┌──────────────────┐  ┌──────────────────────┐            │
+│  │ SwarmOrchestrator│  │ AutoConfigEngine     │            │
+│  │ (Multi-agent)    │  │ (Zero-config setup)  │            │
+│  └──────────────────┘  └──────────────────────┘            │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│                   MASTRA FRAMEWORK                           │
+│                                                               │
+│  ┌──────────────┐  ┌───────────────┐  ┌─────────────────┐ │
+│  │ Agent Defs   │  │  Workflows    │  │  Tool Registry  │ │
+│  └──────────────┘  └───────────────┘  └─────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│               LLM PROVIDER ABSTRACTION LAYER                 │
+│                                                               │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐      │
+│  │Anthropic │ │ OpenAI   │ │  Gemini  │ │  Groq    │      │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘      │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│                   MCP INTEGRATION LAYER                      │
+│                                                               │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐   │
+│  │ House MCPs   │ │ Tenant MCPs  │ │  User MCPs       │   │
+│  │ (Tavily, etc)│ │ (CRM, etc)   │ │  (Personal KB)   │   │
+│  └──────────────┘ └──────────────┘ └──────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Benefits of This Architecture
+
+### 1. LLM Flexibility
+- **Cost Optimization:** Use Gemini for simple tasks ($0.00025/1K tokens), Claude for reasoning
+- **Reliability:** Auto-fallback if one provider is down
+- **Future-Proof:** New providers (Claude 5, GPT-5) integrate in minutes
+- **Local Option:** Run Ollama for privacy-sensitive tenants
+
+### 2. Framework Leverage
+- **Mastra:** Battle-tested agent orchestration (don't reinvent the wheel)
+- **CopilotKit:** Production-ready AI UI components
+- **Reduced Dev Time:** 40% less code to write and maintain
+
+### 3. Best of Both Worlds
+- **DreamCrew:** Autonomous reasoning, multi-agent swarms, auto-config
+- **Mastra:** Agent definitions, workflows, memory
+- **CopilotKit:** Beautiful UI, streaming, HITL interactions
+
+---
+
+## Migration Path
+
+### Phase 1: Add Provider Abstraction (Week 1)
+- Implement LLMProvider interface
+- Create Anthropic, OpenAI, Gemini providers
+- Test with existing agents
+
+### Phase 2: Integrate Mastra (Week 2)
+- Install Mastra framework
+- Wrap SwarmOrchestrator to use Mastra agents
+- Migrate existing agent definitions
+
+### Phase 3: Add CopilotKit UI (Week 3)
+- Install CopilotKit
+- Build Rep Room chat component
+- Build Swarm progress component
+- Build HITL approval flows
+
+### Phase 4: Test & Optimize (Week 4)
+- Load testing with multiple providers
+- Cost analysis per provider
+- UI/UX refinement
+- Documentation
+
+---
+
+## Configuration Example
+
+```typescript
+// config/providers.ts
+
+export const llmProviders = [
+  {
+    provider: 'anthropic',
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    model: 'claude-sonnet-4-5-20250929',
+    useCases: ['reasoning', 'complex-analysis'],
+  },
+  {
+    provider: 'openai',
+    apiKey: process.env.OPENAI_API_KEY,
+    model: 'gpt-4-turbo-preview',
+    useCases: ['general', 'vision'],
+  },
+  {
+    provider: 'gemini',
+    apiKey: process.env.GOOGLE_API_KEY,
+    model: 'gemini-pro',
+    useCases: ['simple', 'cost-sensitive'],
+  },
+];
+```
+
+```typescript
+// Initialize system
+import { LLMProviderSelector } from '@/packages/dreamcrew-orchestrator';
+import { Mastra } from '@mastra/core';
+
+const providers = new LLMProviderSelector(llmProviders);
+const mastra = new Mastra({ llm: providers.selectProvider({ taskType: 'reasoning' }) });
+
+const orchestrator = new SwarmOrchestrator({
+  tenantId: 'tenant-uuid',
+  providers,
+  mastra,
+  maxConcurrentAgents: 10,
+});
+```
+
+This architecture gives you the best of all worlds: provider flexibility, framework power, and beautiful UIs! 🚀
+
